@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Área Restrita - Transparência Barretos</title>
+  <style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #052636; /* Azul bem escuro para diferenciar da área pública */
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        color: #fff;
+    }
+    
+    .login-container {
+        background-color: #ffffff;
+        padding: 3rem;
+        border-radius: 12px;
+        box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+        width: 100%;
+        max-width: 400px;
+        text-align: center;
+        border-top: 6px solid #8b0000; /* Linha vermelha de alerta/restrito */
+    }
+
+    .login-container img {
+        width: 80px;
+        margin-bottom: 1rem;
+    }
+
+    .login-container h2 {
+        color: #0b4f6c;
+        margin-top: 0;
+        margin-bottom: 5px;
+        font-size: 1.6rem;
+    }
+
+    .login-container p {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 2rem;
+    }
+
+    .input-group {
+        margin-bottom: 1.5rem;
+        text-align: left;
+    }
+
+    .input-group label {
+        display: block;
+        color: #333;
+        font-weight: bold;
+        margin-bottom: 8px;
+        font-size: 0.9rem;
+    }
+
+    .input-group input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        box-sizing: border-box;
+        font-size: 1rem;
+        transition: 0.3s;
+    }
+
+    .input-group input:focus {
+        border-color: #0b4f6c;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(11, 79, 108, 0.2);
+    }
+
+    .btn-login {
+        width: 100%;
+        background-color: #0b4f6c;
+        color: white;
+        padding: 14px;
+        border: none;
+        border-radius: 6px;
+        font-size: 1.1rem;
+        font-weight: bold;
+        cursor: pointer;
+        transition: 0.3s;
+        margin-top: 10px;
+    }
+
+    .btn-login:hover {
+        background-color: #083c52;
+    }
+
+    .erro-msg {
+        color: #8b0000;
+        background-color: #fce4e4;
+        padding: 10px;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+        display: none; /* Escondido por padrão */
+    }
+
+    .voltar {
+        display: block;
+        margin-top: 2rem;
+        color: #0b4f6c;
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+    <div class="login-container">
+        <img src="img/Brasão_Barretos.png" alt="Brasão de Barretos">
+        <h2>Área Restrita</h2>
+        <p>Acesso exclusivo para administradores do sistema.</p>
+
+        <div id="mensagem-erro" class="erro-msg">
+            Credenciais incorretas. Tente novamente.
+        </div>
+
+        <form id="form-login">
+            <div class="input-group">
+                <label for="usuario">Utilizador</label>
+                <input type="text" id="usuario" placeholder="Insira o seu login" required>
+            </div>
+
+            <div class="input-group">
+                <label for="senha">Palavra-passe</label>
+                <input type="password" id="senha" placeholder="••••••••" required>
+            </div>
+
+            <button type="submit" class="btn-login">Acessar Painel</button>
+        </form>
+
+        <a href="index.html" class="voltar">← Voltar ao Portal Público</a>
+    </div>
+
+
+
+
+    
+<script>
+    // Simulação simples de login (O ideal é conectar ao seu Python depois)
+    document.getElementById('form-login').addEventListener('submit', function(e) {
+     e.preventDefault();
+            
+    const user = document.getElementById('usuario').value;
+    const pass = document.getElementById('senha').value;
+
+    // Substitua por sua lógica de verificação
+    if(user === 'admin' && pass === 'barretos2026') {
+        // Sucesso! Redireciona para o painel de logs/erros
+        window.location.href = 'adm.html'; 
+    } else {
+      // Erro
+    document.getElementById('mensagem-erro').style.display = 'block';
+    document.getElementById('senha').value = '';
+            }
+        });
+
+const MAX_TENTATIVAS = 3;
+        const TEMPO_BLOQUEIO_MS = 60000; // 1 minuto bloqueado
+
+        function verificarBloqueio() {
+            const bloqueioAte = localStorage.getItem('adminBloqueioAte');
+            const btnLogin = document.querySelector('.btn-login');
+            const msgErro = document.getElementById('mensagem-erro');
+
+            if (bloqueioAte && Date.now() < parseInt(bloqueioAte)) {
+                const restam = Math.ceil((parseInt(bloqueioAte) - Date.now()) / 1000);
+                msgErro.innerText = `Muitas tentativas falhadas. Acesso bloqueado por segurança. Tente novamente em ${restam}s.`;
+                msgErro.style.display = 'block';
+                btnLogin.disabled = true;
+                btnLogin.style.backgroundColor = '#666';
+                btnLogin.style.cursor = 'not-allowed';
+                
+                setTimeout(verificarBloqueio, 1000); // Atualiza a cada segundo
+                return true;
+            } else {
+                localStorage.removeItem('adminBloqueioAte');
+                localStorage.setItem('adminTentativas', '0'); // Reseta tentativas
+                msgErro.style.display = 'none';
+                btnLogin.disabled = false;
+                btnLogin.style.backgroundColor = '#0b4f6c';
+                btnLogin.style.cursor = 'pointer';
+                return false;
+            }
+        }
+
+        // Verifica o bloqueio logo ao abrir a página
+        verificarBloqueio();
+
+        document.getElementById('form-login').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (verificarBloqueio()) return; // Impede submissão se estiver bloqueado
+            
+            const user = document.getElementById('usuario').value;
+            const pass = document.getElementById('senha').value;
+            let tentativas = parseInt(localStorage.getItem('adminTentativas') || '0');
+
+            // Validação de credenciais (Substitua pela sua lógica ou API Python futuramente)
+            if(user === 'admin' && pass === 'barretos2026') {
+                localStorage.setItem('adminLogado', 'true');
+                localStorage.setItem('adminTentativas', '0');
+                window.location.href = 'adm.html'; 
+            } else {
+                tentativas++;
+                localStorage.setItem('adminTentativas', tentativas);
+                
+                if (tentativas >= MAX_TENTATIVAS) {
+                    localStorage.setItem('adminBloqueioAte', Date.now() + TEMPO_BLOQUEIO_MS);
+                    verificarBloqueio();
+                } else {
+                    const msgErro = document.getElementById('mensagem-erro');
+                    msgErro.innerText = `Credenciais incorretas. Tentativa ${tentativas} de ${MAX_TENTATIVAS}.`;
+                    msgErro.style.display = 'block';
+                    document.getElementById('senha').value = '';
+                }
+            }
+        });
+</script>
+</body>
+</html>

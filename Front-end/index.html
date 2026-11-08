@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transparência Pública</title>
+  <meta name="description" content="[Uma frase: o que o negócio faz e para quem.]">
+  <link rel="stylesheet" href="css/estilo.css">
+  <script>
+    // 1. DICIONÁRIO DE TRADUÇÃO DE ERROS
+    function traduzirErro(mensagemOriginal) {
+        if (!mensagemOriginal) return { texto: "Erro desconhecido sem mensagem.", alvo: "body" };
+        let msg = mensagemOriginal.toString().toLowerCase();
+        
+        if (msg.includes('graficoinvestimentos')) return { texto: "O sistema tentou desenhar o 'Gráfico de Investimentos', mas ele não existe no ecrã.", alvo: "#graficoExecutado" };
+        if (msg.includes('getcontext')) return { texto: "Um dos painéis de gráficos falhou ao tentar ser desenhado no ecrã.", alvo: "canvas" };
+        if (msg.includes('failed to fetch') || msg.includes('network error') || msg.includes('falha ao fazer o fetch')) {
+            return { texto: "Falha de comunicação: O Servidor Python (Banco de Dados) não responde. Verifique se o servidor está ligado.", alvo: "form, .filtro-bar, .container" };
+        }
+        if (msg.includes('is not defined')) {
+            let variavel = mensagemOriginal.split(' ')[0] || 'Desconhecida';
+            return { texto: `Erro de código: A função ou elemento '${variavel}' não foi encontrado na página.`, alvo: "body" };
+        }
+        if (msg.includes('null (reading') || msg.includes('undefined (reading')) {
+            return { texto: "O sistema tentou ler ou alterar um painel, botão ou tabela que não existe ou foi apagado.", alvo: "body" };
+        }
+        if (msg.includes('unexpected token') || msg.includes('json')) {
+            return { texto: "O servidor Python devolveu um erro interno (HTML/Texto) em vez dos dados corretos (JSON).", alvo: "body" };
+        }
+        if (msg.includes('datatables')) {
+            return { texto: "Erro na Tabela de Dados: Falha ao carregar, paginar ou processar as informações do banco.", alvo: "table" };
+        }
+        
+        return { texto: `Anomalia detetada: ${mensagemOriginal}`, alvo: "body" };
+    }
+
+    function registarErroNoSistema(nivel, mensagem) {
+        let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+        
+        // Filtro muito curto (apenas 1 segundo) apenas para evitar que o navegador trave em loops infinitos, mas regista tudo!
+        if (logs.length > 0 && logs[0].mensagem.includes(traduzirErro(mensagem).texto.substring(0, 20)) && (Date.now() - logs[0].id) < 1000) {
+            return; 
+        }
+
+        let erroFormatado = traduzirErro(mensagem);
+        let paginaAtual = window.location.pathname.split('/').pop() || 'index.html';
+        let separador = window.location.search.includes('?') ? '&' : '?';
+        let urlComMarcador = paginaAtual + window.location.search + separador + "destacar_erro=" + encodeURIComponent(erroFormatado.alvo);
+
+        logs.unshift({
+            id: Date.now(),
+            data: new Date().toLocaleString('pt-BR'),
+            nivel: nivel,
+            modulo: paginaAtual,
+            mensagem: erroFormatado.texto,
+            url_origem: urlComMarcador
+        });
+        
+        if (logs.length > 100) logs.pop(); // Aumentado para guardar até os últimos 100 erros (Visibilidade Total)
+        localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+    }
+
+    // 1. CAPTURA ERROS GLOBAIS DE JAVASCRIPT
+    window.addEventListener('error', function(event) {
+        registarErroNoSistema('CRÍTICO', event.message || 'Erro de Script Desconhecido');
+    });
+
+    // 2. CAPTURA FALHAS DE FETCH E PROMISES REJEITADAS (Sem restrição de tempo)
+    window.addEventListener('unhandledrejection', function(event) {
+        let msg = event.reason ? (event.reason.message || event.reason) : 'Falha na conexão de rede com a API.';
+        registarErroNoSistema('AVISO', msg);
+    });
+
+    // 3. CAPTURA ERROS ESCONDIDOS NO CONSOLE DO NAVEGADOR
+    const consoleErrorOriginal = console.error;
+    console.error = function(...args) {
+        let mensagem = args.map(a => (typeof a === 'object' && a !== null ? JSON.stringify(a) : a)).join(' ');
+        registarErroNoSistema('CRÍTICO (Oculto)', mensagem);
+        consoleErrorOriginal.apply(console, args); // Mantém o erro no console original
+    };
+
+    // 4. CAPTURA ERROS ESPECÍFICOS DO DATATABLES
+    // Oculta as mensagens nativas feias e envia para o painel de administração
+    if (typeof $ !== 'undefined' && $.fn && $.fn.dataTable) {
+        $.fn.dataTable.ext.errMode = 'none'; // Desliga os alerts irritantes
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof $ !== 'undefined') {
+            $(document).on('error.dt', function (e, settings, techNote, message) {
+                registarErroNoSistema('CRÍTICO', 'DataTables: ' + message);
+            });
+        }
+    });
+
+    // MARCADOR VISUAL DO MÓDULO AVARIADO
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const alvo = urlParams.get('destacar_erro');
+        
+        if (alvo && alvo !== 'body') {
+            setTimeout(() => {
+                let elementos = document.querySelectorAll(alvo);
+                let elemento = elementos.length > 1 ? elementos[elementos.length - 1] : elementos[0];
+                
+                if (elemento) {
+                    let container = (elemento.tagName !== 'CANVAS' && elemento.tagName !== 'TABLE' && elemento.tagName !== 'FORM') ? elemento : (elemento.closest('.card') || elemento.parentNode);
+                    
+                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    container.style.transition = 'all 0.5s ease';
+                    container.style.boxShadow = '0 0 0 4px #ffb300, 0 10px 30px rgba(139,0,0,0.15)';
+                    container.style.backgroundColor = '#fffbf0'; 
+                    container.style.position = 'relative';
+                    
+                    let etiqueta = document.createElement('div');
+                    etiqueta.innerHTML = '🔍 Módulo Avariado';
+                    etiqueta.style.cssText = 'position:absolute; top:-15px; right:20px; background:#ffb300; color:#333; padding:5px 15px; font-weight:bold; font-size:0.9rem; border-radius:20px; box-shadow:0 2px 5px rgba(0,0,0,0.2); z-index:99;';
+                    
+                    container.appendChild(etiqueta);
+                }
+            }, 800);
+        }
+    });
+  </script>
+</head>
+
+<body>
+  <a class="skip" href="#conteudo">Saltar para o conteúdo</a>
+
+ 
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="marca" href="index.html">
+        <span class="marca__marca" aria-hidden="true">
+            <img src="img/Brasão_Barretos.png" alt="Logo" id="logo-admin" style="cursor: default; user-select: none; -webkit-user-drag: none;"></span>
+        <span>Portal de Transparência de Barretos</span>
+      </a>
+      <nav aria-label="Principal">
+        <ul class="menu">
+          <li><a href="index.html" aria-current="page">Início</a></li>
+          <li><a href="despesas.html">Despesas</a></li>
+          <li><a href="receitas.html">Receitas</a></li>
+          <li><a href="parametros.html">Parâmetros</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <style>
+    .caixa-esteira {
+      width: 360px;
+      position: absolute;
+      top: 90px;
+      right: 30px;
+      background: #ffffff;
+      border-radius: 50px;
+      box-shadow: 0 4px 12px rgba(11, 79, 108, 0.2);
+      border: 2px solid #0b4f6c;
+      overflow: hidden;
+      padding: 8px 15px;
+      display: flex;
+      align-items: center;
+      z-index: 50;
+      white-space: nowrap;
+    }
+
+    .icone-esteira {
+      background: #0b4f6c;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 0.8rem;
+      z-index: 2;
+      position: absolute;
+      left: 5px;
+      box-shadow: 2px 0 10px rgba(255,255,255,1);
+    }
+
+    .conteudo-esteira {
+      display: inline-block;
+      padding-left: 100%;
+      animation: rolarEsteira 20s linear infinite;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .caixa-esteira:hover .conteudo-esteira {
+      animation-play-state: paused;
+    }
+
+    .destaque-positivo { color: #2e7d32; }
+    .destaque-negativo { color: #c62828; }
+    .destaque-neutro { color: #0277bd; }
+
+    @keyframes rolarEsteira {
+      0%   { transform: translate3d(0, 0, 0); }
+      100% { transform: translate3d(-100%, 0, 0); }
+    }
+
+    @media (max-width: 768px) {
+      .caixa-esteira {
+        position: relative;
+        top: 0;
+        right: 0;
+        width: 90%;
+        margin: 1rem auto;
+      }
+    }
+
+    .cartao-busca:hover {
+            transform: translateY(-6px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.15) !important;
+    }
+
+    
+  </style>
+
+  <div class="caixa-esteira">
+    <div class="conteudo-esteira" id="dados-esteira-dinamica">
+      <span style="color: #666;">⏳ Sincronizando dados com o portal do Governo...</span>
+    </div>
+  </div>
+
+  <main id="conteudo" class="conteudo">
+    <section class="hero">
+      <h1>Transparência Total Nos Gastos Públicos do Municipio de Barretos.</h1>
+      <p class="lede">Sua ferramenta para auditar e fiscalizar as finanças da cidade com clareza e dados reais.</p>
+            
+      <div style="margin-top: 2rem; display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
+          <a href="despesas.html?auto=sim" class="botao" style="font-size: 0.9rem; padding: 8px 20px; border-color: #8b0000; color: #000000; background-color:#8b00001f; border-radius: 30px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 6px;">
+                <polyline points="22 17 13.5 8.5 8.5 13.5 2 7"></polyline>
+                <polyline points="16 17 22 17 22 11"></polyline>
+                </svg>
+              Explorar Despesas
+          </a>
+
+          <a href="receitas.html?auto=sim" class="botao" style="font-size: 0.9rem; padding: 8px 20px; border-color: #008b74; color: #000000; background-color:#008b741f; border-radius: 30px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 6px;">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M12 9v3"></path>
+              </svg>
+              Visualizar Caixa
+          </a>
+
+          <a href="parametros.html?auto=servidores&ano=2026" class="botao botao--secundario" style="font-size: 0.9rem; padding: 8px 20px; border-color: #df8601; color: #000000; background-color:#df86013f; border-radius: 30px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 6px;">
+                <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                <circle cx="12" cy="12" r="2"></circle>
+                <path d="M6 12h.01"></path>
+                <path d="M18 12h.01"></path>
+              </svg>
+              Folha de Pagamento
+          </a>
+          
+          <a href="parametros.html?auto=comparativo" class="botao botao--secundario" style="font-size: 0.9rem; padding: 8px 20px; border-color: #0b4f6c; color: #000000; background-color:#0777a728; border-radius: 30px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 5px;"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+              Comparativo de Gestões
+          </a>
+
+          <a href="parametros.html?auto=orcamento" class="botao botao--secundario" style="font-size: 0.9rem; padding: 8px 20px; border-color: #4d4d4d; color: #000000; background-color: #4d4d4d1e; border-radius: 30px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 5px;"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+              Distribuição Orçamentária
+          </a>
+      </div>
+    </section>
+
+    <div style="display: flex; gap: 2rem; justify-content: center; flex-wrap: wrap; margin: 2rem auto; max-width: 1100px;">
+      
+      <!-- Gráfico 1: Previsão LOA 2026 -->
+      <div class="card" style="flex: 1; min-width: 350px; background-color: #fcfcfc65; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+          <h2 style="color: #0b4f6c; text-align: center; margin-top: 0; margin-bottom: 2rem; font-size: 1.6rem; font-family: 'Georgia', serif;">
+            Distribuição do Orçamento Previsto (LOA 2026)
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background-color: #0b4f6c; color: white; border-radius: 50%; font-size: 14px; font-weight: bold; margin-left: 8px; cursor: help; vertical-align: text-bottom; font-family: sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.2);" title="Lei Orçamentária Anual: É a lei que planeja e define exatamente em quais áreas o dinheiro arrecadado pela Prefeitura será gasto durante o ano.">?</span>
+          </h2>
+            <div style="position: relative; height: 300px; width: 100%;">
+              <canvas id="graficoPrevisto"></canvas>
+          </div>
+      </div>
+
+      <!-- Gráfico 2: Executado (Gastos Atuais) -->
+      <div class="card" style="flex: 1; min-width: 350px; background-color: #fcfcfc65; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+          <h2 style="color: #0b4f6c; text-align: center; margin-top: 0; margin-bottom: 2rem; font-size: 1.6rem; font-family: 'Georgia', serif;">Gastos Atuais (2026)</h2>
+          <div style="position: relative; height: 300px; width: 100%;">
+              <canvas id="graficoExecutado"></canvas>
+          </div>
+      </div>
+  </div> 
+
+  <div style="display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap; margin: 3rem auto 4rem auto; max-width: 1100px; padding: 0 1rem;">
+        
+        <!-- Botão 1: Raio-X do Fornecedor -->
+        <a href="raiox.html" class="cartao-busca" style="flex: 1; min-width: 300px; background-color: #0b4f6c; color: white; padding: 1.5rem 2rem; border-radius: 12px; text-decoration: none; display: flex; align-items: center; gap: 1.2rem; box-shadow: 0 8px 20px rgba(11, 79, 108, 0.2); transition: all 0.3s ease;">
+            <div style="background: rgba(255, 255, 255, 0.15); padding: 14px; border-radius: 50%; display: flex;">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </div>
+            <div style="text-align: left;">
+                <h3 style="margin: 0 0 6px 0; font-size: 1.25rem; font-family: 'Georgia', serif;">Raio-X do Fornecedor</h3>
+                <p style="margin: 0; font-size: 0.95rem; opacity: 0.9; line-height: 1.3; color: white;">Pesquise todo o histórico de um CNPJ, CPF ou Empresa.</p>
+            </div>
+        </a>
+
+        <!-- Botão 2: obras -->
+        <a href="obras.html" class="cartao-busca" style="flex: 1; min-width: 300px; background-color: #ffffff; color: #0b4f6c; border: 2px solid #0b4f6c; padding: 1.5rem 2rem; border-radius: 12px; text-decoration: none; display: flex; align-items: center; gap: 1.2rem; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05); transition: all 0.3s ease;">
+            <div style="background: rgba(11, 79, 108, 0.1); padding: 14px; border-radius: 50%; display: flex;">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-10-5-10 5v12Z"></path><path d="M10 22v-6.57"></path><path d="M14 22v-6.57"></path><path d="M10 15.43h4"></path><path d="M8 8h8"></path><path d="M8 12h8"></path></svg>
+            </div>
+            <div style="text-align: left;">
+                <h3 style="margin: 0 0 6px 0; font-size: 1.25rem; font-family: 'Georgia', serif;">Painel de Obras</h3>
+                <p style="margin: 0; font-size: 0.95rem; color: #555; line-height: 1.3;">Acompanhe reformas, construções e infraestrutura na cidade.</p>
+            </div>
+        </a>
+    </div>
+    
+    <section class="grade" aria-label="O que oferecemos">
+      <article class="card card-educacao">
+        <h2>
+          Educação e Cultura
+          <img src="img/icone_educacao.png" alt="Educação" class="icone-titulo">          
+        </h2>
+        <p><b>Manutenção de Escolas</b> — Reparos essenciais em infraestrutura;</p>
+        <p><b>Salários e Benefícios</b> — Folha de pagamento dos educadores;</p>
+        <p><b>Materiais Didáticos</b> — Compra de livros e insumos;</p>
+        <p><b>Eventos Culturais</b> - Fomento a atividades locais.</p>
+        <p class="service">
+          <a href="despesas.html?auto=sim&tema=educacao" style="text-decoration: none; color:#2539aa; background-color:#ffffff8c; padding: 8px 20px; border-radius: 30px;">Detalhar Investimestos</a>
+        </p>
+      </article>
+
+      <article class="card card-saude">
+        <h2>Saúde e Saneamento
+          <img src="img/icone_saude.png" alt="Saúde" class="icone-titulo">
+        </h2>
+        <b><p>Compra de Medicamentos</b> - Aquisição de insumos para farmácia municipal;</p>
+        <p><b>Gestão de Hospitais</b> - Manutenção e operação dos centros de saúde;</p>
+        <p><b>Saneamento Básico</b> - Obras e serviços de água e esgoto;</p>
+        <p><b>Controle de Endemias</b> - Ações de prevenção a doenças.</p>
+        <p class="service">
+          <a href="despesas.html?auto=sim&tema=saude" style="text-decoration: none; color:#2539aa; background-color:#ffffff8c; padding: 8px 20px; border-radius: 30px;">Detalhar Investimestos</a>
+        </p>
+      </article>
+
+      <article class="card card-infraestrutura">
+        <h2>Infraestrutura e Urbanismo
+         <img src="img/icone_urbanismo.png" alt="Urbanismo" class="icone-titulo"> 
+        </h2>
+        <p><b>Recapeamento Asfáltico</b> - Obras de pavimentação em ruas;</p>
+        <p><b>Manutenção de Rede de Iluminação</b> - Troca de lâmpadas e expansão;</p>
+        <p><b>Limpeza Pública</b> - Coleta de lixo e limpeza de logradouros;</p>
+        <p><b>Construção de Praças</b> -Novos espaços de lazer e convivência.</p>
+        <p class="service">
+          <a href="despesas.html?auto=sim&tema=infraestrutura" style="text-decoration: none; color:#2539aa; background-color:#ffffff8c; padding: 8px 20px; border-radius: 30px;">Detalhar Investimestos</a>
+        </p>
+      </article>
+    </section>
+  </main>
+
+  <div id="caixa-prefeito" style="display: none; position: fixed; z-index: 999999; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border-top: 4px solid #0b4f6c; text-align: center; width: 230px; pointer-events: none; transform: translate(-50%, 25px);">
+    <!-- Mantenha o link da sua imagem atual no src="" -->
+    <img src="img/odair-silva.jpg" style="width: 95px; height: 95px; border-radius: 50%; object-fit: cover; border: 3px solid #e1eef4; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 12px;">
+    
+    <h4 style="margin: 0 0 6px 0; color: #0b4f6c; font-size: 1.1rem; line-height: 1.2;">Odair de Moura e Silva</h4>
+    <p style="margin: 0; font-size: 0.9rem; color: #666;">62 anos (Nasc: 15/09/1964)</p>
+</div>
+
+<div id="caixa-vice" style="display: none; position: fixed; z-index: 999999; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border-top: 4px solid #8b0000; text-align: center; width: 230px; pointer-events: none; transform: translate(-50%, 25px);">
+    <!-- Coloque aqui o link/caminho para a foto do vice-prefeito -->
+    <img src="img/mussa-calil.jpg" style="width: 95px; height: 95px; border-radius: 50%; object-fit: cover; border: 3px solid #f8eaeb; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 12px;">
+    
+    <h4 style="margin: 0 0 6px 0; color: #8b0000; font-size: 1.1rem; line-height: 1.2;">Mussa Calil Neto</h4>
+    <p style="margin: 0; font-size: 0.9rem; color: #666;">73 anos (Nasc: 21/02/1953)</p>
+</div>
+  
+
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <p><b>Amanda Oliveira Rodrigues - 82316860; Gabriel Patricio Soares - 82317440; João Vitor Benjamin  - 823133703; </b></p>
+      <p><b>Nathália de Almeida Donato - 823118299; Paulo Henrique Varga da Silva - 823142340;</b></p>
+    </div>
+  </footer>
+
+  
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  
+  <script>
+document.addEventListener("DOMContentLoaded", function() {
+    const canvasInvestimentos = document.getElementById('graficoInvestimentos');
+    
+    // 2. Trava de segurança: Se não existir, interrompe silenciosamente sem gerar erro
+    if (!canvasInvestimentos) return; 
+
+    // 3. Se existir, avança com o desenho normal (o seu código original começa aqui)
+    const ctx = canvasInvestimentos.getContext('2d');
+    
+    // 1. Dados simulados (Valores Totais em Reais)
+    const gastosSaude = 85500000;       // Ex: 85 milhões
+    const gastosEducacao = 62300000;    // Ex: 62 milhões
+    const gastosInfra = 41200000;       // Ex: 41 milhões
+
+    new Chart(ctx, {
+        type: 'doughnut', // Estilo "Rosca/Anel"
+        data: {
+            labels: ['Saúde e Saneamento', 'Educação e Cultura', 'Infraestrutura e Urbanismo'],
+            datasets: [{
+                data: [gastosSaude, gastosEducacao, gastosInfra],
+                backgroundColor: [
+                    '#2A9D8F', // Verde elegante (Saúde)
+                    '#E9C46A', // Amarelo suave (Educação)
+                    '#264653'  // Azul Escuro (Infraestrutura)
+                ],
+                borderWidth: 3,
+                borderColor: '#ffffff', // Borda branca separando as fatias
+                hoverOffset: 10 // Dá um efeito de "saltar" quando passa o mouse
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '65%', // Tamanho do buraco no meio (0% seria uma pizza normal)
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { 
+                        font: { size: 14, family: 'Arial' },
+                        padding: 20
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    titleFont: { size: 14 },
+                    bodyFont: { size: 13 },
+                    padding: 12,
+                    callbacks: {
+                        // Esta função calcula a % e formata o dinheiro ao passar o mouse
+                        label: function(context) {
+                            let label = context.label || '';
+                            let valor = context.raw;
+                            
+                            // Calcula o total somando todas as fatias
+                            let total = context.chart._metasets[context.datasetIndex].total;
+                            // Calcula a % exata
+                            let porcentagem = ((valor / total) * 100).toFixed(1) + '%';
+                            
+                            // Formata para R$ 1.000.000,00
+                            let valorFormatado = new Intl.NumberFormat('pt-BR', { 
+                                style: 'currency', 
+                                currency: 'BRL' 
+                            }).format(valor);
+                            
+                            return ` ${label}: ${valorFormatado} (${porcentagem})`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+});
+
+
+  document.addEventListener('DOMContentLoaded', () => {
+      const anoRef = 2026;
+      const mesRef = "08";
+      const textoRef = "Agosto de 2026";
+      const esteiraDinamica = document.getElementById('dados-esteira-dinamica');
+
+      // Função que monta o HTML da esteira
+      function desenharEsteira(totalReceitas, totalDespesas) {
+          const saldo = totalReceitas - totalDespesas;
+          const formatarRS = (valor) => valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+          const corSaldo = saldo >= 0 ? 'destaque-positivo' : 'destaque-negativo';
+
+          esteiraDinamica.innerHTML = `
+              <span style="margin-right: 30px;">📅 <span class="destaque-neutro">Fechamento:</span> ${textoRef}</span>
+              <span style="margin-right: 30px;">💰 <span class="destaque-positivo">Arrecadado:</span> ${formatarRS(totalReceitas)}</span>
+              <span style="margin-right: 30px;">📉 <span class="destaque-negativo">Gasto:</span> ${formatarRS(totalDespesas)}</span>
+              <span style="margin-right: 30px;">🏛️ <span class="${corSaldo}">Saldo Disponível:</span> ${formatarRS(saldo)}</span>
+              <span style="margin-right: 30px;">🅿️ <span style="cursor: help; border-bottom: 2px dotted #0b4f6c; padding-bottom: 2px;"
+                                                            onmouseenter="document.getElementById('caixa-prefeito').style.display = 'block'"
+                                                            onmouseleave="document.getElementById('caixa-prefeito').style.display = 'none'"
+                                                            onmousemove="document.getElementById('caixa-prefeito').style.left = event.clientX + 'px'; document.getElementById('caixa-prefeito').style.top = event.clientY + 'px';">
+                                                        Prefeito: Odair Silva
+                                                    </span>
+              <span style="margin-right: 30px;"><span style="cursor: help; border-bottom: 2px dotted #8b0000; padding-bottom: 2px; margin-left: 20px;"
+                                                        onmouseenter="document.getElementById('caixa-vice').style.display = 'block'"
+                                                        onmouseleave="document.getElementById('caixa-vice').style.display = 'none'"
+                                                        onmousemove="document.getElementById('caixa-vice').style.left = event.clientX + 'px'; document.getElementById('caixa-vice').style.top = event.clientY + 'px';">
+                                                            👥 Vice-Prefeito: Mussa Calil
+                                                </span>
+          `;
+      }
+
+      // 1. VERIFICA A MEMÓRIA IMEDIATAMENTE (Evita o piscar do "Sincronizando...")
+      const cacheEsteira = sessionStorage.getItem('cacheEsteiraBarretos');
+
+      if (cacheEsteira) {
+          // Se já tem salvo, desenha instantaneamente
+          const dados = JSON.parse(cacheEsteira);
+          desenharEsteira(dados.receitas, dados.despesas);
+      }
+
+      // 2. VAI AO SERVIDOR EM SEGUNDO PLANO (Para garantir que os dados estão atualizados)
+      Promise.all([
+          fetch(`http://127.0.0.1:5050/api/receitas?ano=${anoRef}&mes=${mesRef}`).then(r => r.json()),
+          fetch(`http://127.0.0.1:5050/api/despesas?ano=${anoRef}&mes=${mesRef}`).then(r => r.json())
+      ]).then(([jsonReceitas, jsonDespesas]) => {
+          let totalReceitas = 0;
+          if (jsonReceitas.dados) jsonReceitas.dados.forEach(i => totalReceitas += i.valor);
+
+          let totalDespesas = 0;
+          if (jsonDespesas.dados) jsonDespesas.dados.forEach(i => totalDespesas += i.valor);
+
+          // Grava os novos totais na memória do navegador para a próxima vez
+          sessionStorage.setItem('cacheEsteiraBarretos', JSON.stringify({
+              receitas: totalReceitas,
+              despesas: totalDespesas
+          }));
+
+          // Atualiza a tela de forma invisível
+          desenharEsteira(totalReceitas, totalDespesas);
+          
+      }).catch(erro => {
+          if (!cacheEsteira) {
+              esteiraDinamica.innerHTML = `<span style="color: #c62828;">⚠️ Sistema temporariamente offline.</span>`;
+          }
+      });
+  });
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    
+    const coresPadrao = ['#2a9d8f', '#e9c46a', '#264653'];
+    const labelsPadrao = ['Saúde e Saneamento', 'Educação e Cultura', 'Infraestrutura e Urbanismo'];
+
+    const opcoesGrafico = {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        plugins: {
+            legend: { position: 'bottom', labels: { padding: 20, font: { size: 13, family: 'sans-serif' }, color: '#666' } }
+        }
+    };
+
+    // ==========================================
+    // 1. GRÁFICO PREVISTO (LOA)
+    // ==========================================
+    const ctxPrevisto = document.getElementById('graficoPrevisto').getContext('2d');
+    new Chart(ctxPrevisto, {
+        type: 'doughnut',
+        data: {
+            labels: labelsPadrao,
+            datasets: [{
+                data: [382.7, 256.4, 69.5], 
+                backgroundColor: coresPadrao,
+                borderWidth: 4, borderColor: '#ffffff', hoverOffset: 6
+            }]
+        },
+        options: {
+            ...opcoesGrafico,
+            plugins: {
+                ...opcoesGrafico.plugins,
+                tooltip: { 
+                    callbacks: { 
+                        label: function(ctx) {
+                            let valorEmMilhoes = ctx.parsed;
+                            let porcentagem = ((valorEmMilhoes / 1302) * 100).toFixed(1);
+                            return ` R$ ${valorEmMilhoes} Milhões (${porcentagem}% da LOA)`;
+                        }
+                    } 
+                }
+            }
+        }
+    });
+
+    // ==========================================
+    // 2. CONFIGURAÇÃO DA TOOLTIP DO GRÁFICO REAL
+    // ==========================================
+    const tooltipExecutado = {
+        callbacks: { 
+            label: function(ctx) {
+                let valor = ctx.raw;
+                if(valor === 0.1) return null; 
+                let totalDasTresAreas = ctx.chart._metasets[ctx.datasetIndex].total;
+                let porcentagem = totalDasTresAreas > 0 ? ((valor / totalDasTresAreas) * 100).toFixed(1) : 0;
+                let valorFormatado = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
+                return ` ${valorFormatado} (${porcentagem}%)`;
+            }
+        } 
+    };
+
+    // ==========================================
+    // 3. LÓGICA DE CACHE E SEGUNDO PLANO
+    // ==========================================
+    const ctxExecutado = document.getElementById('graficoExecutado').getContext('2d');
+    let chartExecutado;
+
+    // Espreita a memória do navegador para ver se já calculou isso hoje
+    const cacheGastos = sessionStorage.getItem('cacheGastosBarretos2026');
+
+    if (cacheGastos) {
+        // JÁ TEM MEMÓRIA: Desenha o gráfico final imediatamente, sem piscar nada
+        const dados = JSON.parse(cacheGastos);
+        chartExecutado = new Chart(ctxExecutado, {
+            type: 'doughnut',
+            data: {
+                labels: labelsPadrao,
+                datasets: [{
+                    data: [dados.saude, dados.educacao, dados.infra],
+                    backgroundColor: coresPadrao,
+                    borderWidth: 4, borderColor: '#ffffff', hoverOffset: 6
+                }]
+            },
+            options: { ...opcoesGrafico, plugins: { ...opcoesGrafico.plugins, tooltip: tooltipExecutado } }
+        });
+
+        // Chama a API silenciosamente no fundo para garantir atualização
+        carregarGastosReais(true); 
+
+    } else {
+        // NÃO TEM MEMÓRIA (Primeiro acesso): Mostra a tela de carregamento cinza
+        chartExecutado = new Chart(ctxExecutado, {
+            type: 'doughnut',
+            data: {
+                labels: labelsPadrao,
+                datasets: [{
+                    data: [0.1, 0.1, 0.1],
+                    backgroundColor: ['#e0e0e0', '#e0e0e0', '#e0e0e0'],
+                    borderWidth: 3, borderColor: '#fcf9f9'
+                }]
+            },
+            options: {
+                ...opcoesGrafico,
+                plugins: {
+                    ...opcoesGrafico.plugins,
+                    title: { display: true, text: '⏳ Calculando gastos em tempo real...', color: '#888', font: { style: 'italic' } },
+                    tooltip: tooltipExecutado
+                }
+            }
+        });
+
+        // Chama a API normalmente
+        carregarGastosReais(false);
+    }
+
+    async function carregarGastosReais(isBackground) {
+        const termosSaude = ['saude', 'saúde', 'hospital', 'misericordia', 'medicamento', 'medico', 'clinica', 'farmacia'];
+        const termosSaneamento = ['saneamento', 'agua', 'esgoto', 'saae', 'drenagem'];
+        const termosEducacao = ['educacao', 'educação', 'escola', 'ensino', 'professor', 'didático', 'creche', 'merenda'];
+        const termosCultura = ['cultura', 'evento', 'festa', 'show', 'teatro', 'museu'];
+        const termosInfraestrutura = ['infraestrutura', 'urbano', 'asfalto', 'engenharia', 'pavimentacao', 'iluminacao'];
+        
+        const arraySaudeSaneamento = [...termosSaude, ...termosSaneamento];
+        const arrayEducacaoCultura = [...termosEducacao, ...termosCultura];
+        const arrayInfraUrbanismo = [...termosInfraestrutura];
+
+        let gastoSaude = 0, gastoEducacao = 0, gastoInfra = 0;
+
+        try {
+            const promessas = [];
+            for(let m = 1; m <= 12; m++) {
+                promessas.push(
+                    fetch(`http://127.0.0.1:5050/api/despesas?ano=2026&mes=${m.toString().padStart(2, '0')}`)
+                    .then(res => res.json())
+                    .catch(() => ({ dados: [] }))
+                );
+            }
+
+            const resultados = await Promise.all(promessas);
+
+            resultados.forEach(res => {
+                if (res.dados) {
+                    res.dados.forEach(item => {
+                        const texto = `${item.categoria} ${item.fornecedor} ${item.descricao}`.toLowerCase();
+                        
+                        if (arraySaudeSaneamento.some(t => texto.includes(t))) gastoSaude += item.valor;
+                        else if (arrayEducacaoCultura.some(t => texto.includes(t))) gastoEducacao += item.valor;
+                        else if (arrayInfraUrbanismo.some(t => texto.includes(t))) gastoInfra += item.valor;
+                    });
+                }
+            });
+
+            // 1. Grava na memória do navegador
+            sessionStorage.setItem('cacheGastosBarretos2026', JSON.stringify({
+                saude: gastoSaude, educacao: gastoEducacao, infra: gastoInfra
+            }));
+
+            // 2. Atualiza os valores do gráfico
+            chartExecutado.data.datasets[0].backgroundColor = coresPadrao;
+            chartExecutado.data.datasets[0].data = [gastoSaude, gastoEducacao, gastoInfra];
+            
+            if (!isBackground) {
+                chartExecutado.options.plugins.title.display = false; // Tira o aviso de carregamento apenas se não estiver em 2º plano
+            }
+            
+            chartExecutado.update();
+
+        } catch (error) {
+            if (!isBackground) {
+                chartExecutado.options.plugins.title.text = '⚠️ Erro ao buscar os gastos';
+                chartExecutado.update();
+            }
+        }
+    }
+});
+
+// ==========================================
+// GATILHO SECRETO DO ADMINISTRADOR (5 CLIQUES)
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
+    const logoAdmin = document.getElementById('logo-admin');
+    let contadorCliques = 0;
+    let timerCliques;
+
+    if (logoAdmin) {
+        logoAdmin.addEventListener('click', function(e) {
+            e.preventDefault(); // Impede o clique normal
+            e.stopPropagation();
+
+            contadorCliques++;
+            clearTimeout(timerCliques);
+
+            // Se atingir 5 cliques rápidos, vai para o painel
+            if (contadorCliques >= 5) {
+                window.location.href = 'login.html';
+                return;
+            }
+
+            // Se não chegar a 5 cliques, aguarda 400ms e faz o comportamento normal (ir para o Início)
+            timerCliques = setTimeout(() => {
+                if (contadorCliques < 5) {
+                    window.location.href = 'index.html';
+                }
+                contadorCliques = 0; // Zera o contador
+            }, 400); 
+        });
+    }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transparência Pública</title>
+  <meta name="description" content="Parâmetros e Consultas Específicas">
+  <link rel="stylesheet" href="css/estilo.css">
+  
+  <style>
+    /* ESTILOS DAS JANELAS DE SOBREPOSIÇÃO (MODALS) */
+    .modal-overlay {
+        display: none; 
+        position: fixed; 
+        z-index: 1000; 
+        left: 0; 
+        top: 0; 
+        width: 100%; 
+        height: 100%; 
+        background-color: rgba(0,0,0,0.7); 
+        backdrop-filter: blur(5px); 
+        overflow-y: auto;
+    }
+    
+    .modal-content {
+        background-color: #f9f9f9;
+        margin: 5% auto; 
+        padding: 2rem;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 1000px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        position: relative;
+        animation: deslizarBaixo 0.4s ease-out;
+    }
+
+    @keyframes deslizarBaixo {
+        from { transform: translateY(-50px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+    }
+
+    .fechar-modal {
+        color: #aaa;
+        float: right;
+        font-size: 30px;
+        font-weight: bold;
+        cursor: pointer;
+        position: absolute;
+        top: 15px;
+        right: 25px;
+        transition: 0.3s;
+    }
+
+    .fechar-modal:hover { color: #333; }
+  </style>
+  <script>
+    const urlBusca = window.location.search;
+    window.veioDaHome = false;
+
+    if (urlBusca.includes('auto=')) {
+        window.veioDaHome = true;
+        
+        if (urlBusca.includes('auto=servidores')) {
+            document.write('<style id="estilo-auto-abrir">#modal-servidores { display: block !important; } body { overflow: hidden; }</style>');
+        } else if (urlBusca.includes('auto=comparativo')) {
+            document.write('<style id="estilo-auto-abrir">#modal-comparativo { display: block !important; } body { overflow: hidden; }</style>');
+        } else if (urlBusca.includes('auto=orcamento')) {
+            document.write('<style id="estilo-auto-abrir">#modal-distribuicao { display: block !important; } body { overflow: hidden; }</style>');
+        }
+    }
+
+    // 1. DICIONÁRIO DE TRADUÇÃO DE ERROS
+    function traduzirErro(mensagemOriginal) {
+        if (!mensagemOriginal) return { texto: "Erro desconhecido sem mensagem.", alvo: "body" };
+        let msg = mensagemOriginal.toString().toLowerCase();
+        
+        if (msg.includes('graficoinvestimentos')) return { texto: "O sistema tentou desenhar o 'Gráfico de Investimentos', mas ele não existe no ecrã.", alvo: "#graficoExecutado" };
+        if (msg.includes('getcontext')) return { texto: "Um dos painéis de gráficos falhou ao tentar ser desenhado no ecrã.", alvo: "canvas" };
+        if (msg.includes('failed to fetch') || msg.includes('network error') || msg.includes('falha ao fazer o fetch')) {
+            return { texto: "Falha de comunicação: O Servidor Python (Banco de Dados) não responde. Verifique se o servidor está ligado.", alvo: "form, .filtro-bar, .container" };
+        }
+        if (msg.includes('is not defined')) {
+            let variavel = mensagemOriginal.split(' ')[0] || 'Desconhecida';
+            return { texto: `Erro de código: A função ou elemento '${variavel}' não foi encontrado na página.`, alvo: "body" };
+        }
+        if (msg.includes('null (reading') || msg.includes('undefined (reading')) {
+            return { texto: "O sistema tentou ler ou alterar um painel, botão ou tabela que não existe ou foi apagado.", alvo: "body" };
+        }
+        if (msg.includes('unexpected token') || msg.includes('json')) {
+            return { texto: "O servidor Python devolveu um erro interno (HTML/Texto) em vez dos dados corretos (JSON).", alvo: "body" };
+        }
+        if (msg.includes('datatables')) {
+            return { texto: "Erro na Tabela de Dados: Falha ao carregar, paginar ou processar as informações do banco.", alvo: "table" };
+        }
+        
+        return { texto: `Erro detetada: ${mensagemOriginal}`, alvo: "body" };
+    }
+
+    function registarErroNoSistema(nivel, mensagem) {
+        let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+        
+        // Filtro muito curto (apenas 1 segundo) apenas para evitar que o navegador trave em loops infinitos, mas regista tudo!
+        if (logs.length > 0 && logs[0].mensagem.includes(traduzirErro(mensagem).texto.substring(0, 20)) && (Date.now() - logs[0].id) < 1000) {
+            return; 
+        }
+
+        let erroFormatado = traduzirErro(mensagem);
+        let paginaAtual = window.location.pathname.split('/').pop() || 'index.html';
+        let separador = window.location.search.includes('?') ? '&' : '?';
+        let urlComMarcador = paginaAtual + window.location.search + separador + "destacar_erro=" + encodeURIComponent(erroFormatado.alvo);
+
+        logs.unshift({
+            id: Date.now(),
+            data: new Date().toLocaleString('pt-BR'),
+            nivel: nivel,
+            modulo: paginaAtual,
+            mensagem: erroFormatado.texto,
+            url_origem: urlComMarcador
+        });
+        
+        if (logs.length > 100) logs.pop(); // Aumentado para guardar até os últimos 100 erros (Visibilidade Total)
+        localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+    }
+
+    // 1. CAPTURA ERROS GLOBAIS DE JAVASCRIPT
+    window.addEventListener('error', function(event) {
+        registarErroNoSistema('CRÍTICO', event.message || 'Erro de Script Desconhecido');
+    });
+
+    // 2. CAPTURA FALHAS DE FETCH E PROMISES REJEITADAS (Sem restrição de tempo)
+    window.addEventListener('unhandledrejection', function(event) {
+        let msg = event.reason ? (event.reason.message || event.reason) : 'Falha na conexão de rede com a API.';
+        registarErroNoSistema('AVISO', msg);
+    });
+
+    // 3. CAPTURA ERROS ESCONDIDOS NO CONSOLE DO NAVEGADOR
+    const consoleErrorOriginal = console.error;
+    console.error = function(...args) {
+        let mensagem = args.map(a => (typeof a === 'object' && a !== null ? JSON.stringify(a) : a)).join(' ');
+        registarErroNoSistema('CRÍTICO (Oculto)', mensagem);
+        consoleErrorOriginal.apply(console, args); // Mantém o erro no console original
+    };
+
+    // 4. CAPTURA ERROS ESPECÍFICOS DO DATATABLES
+    // Oculta as mensagens nativas feias e envia para o painel de administração
+    if (typeof $ !== 'undefined' && $.fn && $.fn.dataTable) {
+        $.fn.dataTable.ext.errMode = 'none'; // Desliga os alerts irritantes
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof $ !== 'undefined') {
+            $(document).on('error.dt', function (e, settings, techNote, message) {
+                registarErroNoSistema('CRÍTICO', 'DataTables: ' + message);
+            });
+        }
+    });
+
+    // MARCADOR VISUAL DO MÓDULO AVARIADO
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const alvo = urlParams.get('destacar_erro');
+        
+        if (alvo && alvo !== 'body') {
+            setTimeout(() => {
+                let elementos = document.querySelectorAll(alvo);
+                let elemento = elementos.length > 1 ? elementos[elementos.length - 1] : elementos[0];
+                
+                if (elemento) {
+                    let container = (elemento.tagName !== 'CANVAS' && elemento.tagName !== 'TABLE' && elemento.tagName !== 'FORM') ? elemento : (elemento.closest('.card') || elemento.parentNode);
+                    
+                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    container.style.transition = 'all 0.5s ease';
+                    container.style.boxShadow = '0 0 0 4px #ffb300, 0 10px 30px rgba(139,0,0,0.15)';
+                    container.style.backgroundColor = '#fffbf0'; 
+                    container.style.position = 'relative';
+                    
+                    let etiqueta = document.createElement('div');
+                    etiqueta.innerHTML = '🔍 Módulo Avariado';
+                    etiqueta.style.cssText = 'position:absolute; top:-15px; right:20px; background:#ffb300; color:#333; padding:5px 15px; font-weight:bold; font-size:0.9rem; border-radius:20px; box-shadow:0 2px 5px rgba(0,0,0,0.2); z-index:99;';
+                    
+                    container.appendChild(etiqueta);
+                }
+            }, 800);
+        }
+    });
+  </script>
+</head>
+<body>
+  <a class="skip" href="#conteudo">Saltar para o conteúdo</a>
+
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="marca" href="index.html">
+        <span class="marca__marca" aria-hidden="true"><img src="img/Brasão_Barretos.png" alt="Logo"></span>
+        <span>Portal de Transparência de Barretos</span>
+      </a>
+      <nav aria-label="Principal">
+        <ul class="menu">
+          <li><a href="index.html">Início</a></li>
+          <li><a href="despesas.html">Despesas</a></li>
+          <li><a href="receitas.html">Receitas</a></li>
+          <li><a href="parametros.html" aria-current="page">Parâmetros</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <h2 style="color: #333; text-align: center; margin-top: 2rem; margin-bottom: 2rem;">Painéis de Pesquisas</h2>
+
+  <!-- 1. CARD: SERVIDORES -->
+  <div class="card" style="padding: 2rem; max-width: 900px; margin: 0 auto 2rem auto; text-align: center; border: 1px solid #333; border-left: 8px solid #df8601; border-radius: 8px; background-color: #eeeeee5e; box-shadow: 0 4px 8px rgba(0,0,0,0.05);">
+      <h3 style="color: #df8601; margin: 0 0 0.5rem 0; font-size: 1.5rem;">Remuneração de Servidores</h3>
+      <p style="color: #666; margin: 0 0 1.5rem 0; font-size: 1.1rem;">Consulte a folha de pagamento detalhada dos funcionários públicos do município.</p>
+      <button onclick="abrirModalServidores()" class="botao" style="background-color: #df8601; color: white; font-size: 1.1rem; padding: 12px 25px; border: none; border-radius: 6px; cursor: pointer; transition: 0.3s;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" style="vertical-align: middle; margin-right: 8px;">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <circle cx="12" cy="12" r="2"></circle>
+            <path d="M6 12h.01"></path>
+            <path d="M18 12h.01"></path>
+          </svg>
+          Abrir Painel de Folha de Pagamento
+      </button>
+  </div>
+
+  <!-- 2. CARD: COMPARATIVO DE GESTÕES -->
+  <div class="card" style="padding: 2rem; max-width: 900px; margin: 0 auto 2rem auto; text-align: center; border: 1px solid #333; border-left: 8px solid #0b4f6c; border-radius: 8px; background-color: #eeeeee5e; box-shadow: 0 4px 8px rgba(0,0,0,0.05);">
+      <h3 style="color: #0b4f6c; margin: 0 0 0.5rem 0; font-size: 1.5rem;">Comparativo de Gestões</h3>
+      <p style="color: #666; margin: 0 0 1.5rem 0; font-size: 1.1rem;">Cruze e compare os dados de arrecadação e gastos entre diferentes mandatos.</p>
+      <button onclick="abrirModalComparativo()" class="botao" style="background-color: #0b4f6c; color: white; font-size: 1.1rem; padding: 12px 25px; border: none; border-radius: 6px; cursor: pointer; transition: 0.3s;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 8px;"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+          Abrir Painel de Comparaçãos
+      </button>
+  </div>
+
+  <!-- 3. CARD: DISTRIBUIÇÃO ORÇAMENTÁRIA -->
+  <div class="card" style="padding: 2rem; max-width: 900px; margin: 0 auto 4rem auto; text-align: center; border: 1.5px solid #333; border-left: 8px solid #4d4d4d; border-radius: 8px; background-color: #eeeeee5e; box-shadow: 0 4px 8px rgba(0,0,0,0.05);">
+      <h3 style="color: #4d4d4d; margin: 0 0 0.5rem 0; font-size: 1.5rem;">Distribuição Orçamentária (LOA vs Real)</h3>
+      <p style="color: #666; margin: 0 0 1.5rem 0; font-size: 1.1rem;">Acompanhe o orçamento exato previsto por lei e quanto já foi consumido no ano atual.</p>
+      <button onclick="abrirModalDistribuicao()" class="botao" style="background-color: #4d4d4d; color: white; font-size: 1.1rem; padding: 12px 25px; border: none; border-radius: 6px; cursor: pointer; transition: 0.3s;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 8px;"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+          Abrir Painel de Orçamento
+      </button>
+  </div>
+
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <p><b>Amanda Oliveira Rodrigues - 82316860; Gabriel Patricio Soares - 82317440; João Vitor Benjamin  - 823133703; </b></p>
+      <p><b>Nathália de Almeida Donato - 823118299; Paulo Henrique Varga da Silva - 823142340;</b></p>
+    </div>
+  </footer>
+
+
+  <div id="modal-servidores" class="modal-overlay">
+      <div class="modal-content">
+          <span class="fechar-modal" onclick="fecharModalServidores()">&times;</span>
+          
+          <h2 style="color: #8b0000; margin-top: 0;">Folha de Pagamento Municipal</h2>
+          <hr style="border: 0; border-top: 1px solid #ddd; margin-bottom: 2rem;">
+
+          <form id="form-servidores" class="filtro-bar" style="display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; margin-bottom: 20px;">
+            
+            <!-- Bloco do Mês -->
+            <div style="flex: 1; min-width: 120px;">
+              <label for="filtro-mes-servidor" style="font-weight: bold; color: #333; margin-bottom: 5px; display: block;">Mês:</label>
+              <select id="filtro-mes-servidor" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px;">
+                <option value="">Selecione</option>
+                <option value="00">Todos os Meses</option>
+                <option value="01">Janeiro</option>
+                <option value="02">Fevereiro</option>
+                <option value="03">Março</option>
+                <option value="04">Abril</option>
+                <option value="05">Maio</option>
+                <option value="06">Junho</option>
+                <option value="07">Julho</option>
+                <option value="08">Agosto</option>
+                <option value="09">Setembro</option>
+                <option value="10">Outubro</option>
+                <option value="11">Novembro</option>
+                <option value="12">Dezembro</option>
+              </select>
+            </div>
+
+            <!-- Bloco do Ano -->
+            <div style="flex: 1; min-width: 120px;">
+              <label for="filtro-ano-servidor" style="font-weight: bold; color: #333; margin-bottom: 5px; display: block;">Ano:</label>
+              <select id="filtro-ano-servidor" required style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px;">
+                <option value="">Selecione</option>
+                <option value="2026">2026</option>
+                <option value="2025">2025</option>
+                <option value="2024">2024</option>
+                <option value="2023">2023</option>
+                <option value="2022">2022</option>
+                <option value="2021">2021</option>
+                <option value="2020">2020</option>
+                <option value="2019">2019</option>
+                <option value="2018">2018</option>
+                <option value="2017">2017</option>
+                <option value="2016">2016</option>
+                <option value="2015">2015</option>
+              </select>
+            </div>
+
+            <!-- Bloco do Cargo -->
+            <div style="flex: 2; min-width: 200px;">
+                <label for="filtro-cargo-servidor" style="font-weight: bold; color: #333; margin-bottom: 5px; display: block;">Cargo (Opcional):</label>
+                <input type="text" id="filtro-cargo-servidor" placeholder="Ex: Professor, Médico..." style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px;">
+            </div>
+
+            <!-- Bloco do Botão -->
+            <div style="flex: 0 0 auto;">
+                <button type="submit" class="botao" style="background-color: #8b0000; color: white; padding: 10px 25px; height: 41px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Buscar Folha</button>
+            </div>
+            
+          </form>
+
+          <div id="resultados-servidores" style="margin-top: 2rem;">
+              <p style="text-align: center; color: #666;">Selecione o mês e ano acima para carregar a base de funcionários.</p>
+          </div>
+          <div id="areaTabela" Style="display:none; margin: 20px;">
+            <table id="tabelaServidores" class="display" style="width:100%">
+                <thead>
+                    <tr>
+                        <th>Mês</th>
+                        <th>Nome do Servidor</th>
+                        <th>Cargo</th>
+                        <th>Salário</th>
+                    </tr>
+                </thead>
+                <tbody id="corpoTabela"></tbody>
+            </table>
+          </div>
+      </div>
+  </div>
+
+
+  <div id="modal-comparativo" class="modal-overlay">
+      <div class="modal-content">
+          <span class="fechar-modal" onclick="fecharModalComparativo()">&times;</span>
+          
+          <h2 style="color: #0b4f6c; margin-top: 0; text-align: center;">Painel de Gestões e Mandatos</h2>
+          
+          <!-- ABAS DE NAVEGAÇÃO -->
+          <div style="display: flex; justify-content: center; gap: 10px; margin-top: 15px; margin-bottom: 20px;">
+              <button id="btn-tab-comparativo" onclick="alternarAbaGestao('comparativo')" style="padding: 10px 20px; background-color: #0b4f6c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.3s;">Comparar Gestões Diferentes</button>
+              <button id="btn-tab-evolucao" onclick="alternarAbaGestao('evolucao')" style="padding: 10px 20px; background-color: #ddd; color: #333; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.3s;">Evolução Anual do Prefeito</button>
+          </div>
+          
+          <hr style="border: 0; border-top: 1px solid #ddd; margin-bottom: 2rem;">
+
+          <!-- ABA 1: COMPARATIVO DIRETO (O QUE JÁ EXISTIA) -->
+          <div id="bloco-comparar-gestoes">
+              <div style="display: flex; gap: 1rem; justify-content: center; margin: 1.5rem 0;">
+                  <div>
+                      <label style="font-weight: bold;">Período 1:</label>
+                      <select id="ano1" class="campo-filtro" style="padding: 8px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+                          <option value="">Selecione um ano</option>
+                          <script>for(let a=2014; a<=2026; a++) document.write(`<option value="${a}">${a}</option>`);</script>
+                      </select>
+                  </div>
+                  <div>
+                      <label style="font-weight: bold;">Período 2:</label>
+                      <select id="ano2" class="campo-filtro" style="padding: 8px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+                          <option value="">Selecione um ano</option>
+                          <script>for(let a=2014; a<=2026; a++) document.write(`<option value="${a}">${a}</option>`);</script>
+                      </select>
+                  </div>
+                  <button onclick="gerarComparativo()" class="botao" style="background-color: #0b4f6c; margin-top: 1.4rem;">Comparar</button>
+              </div>
+          </div>
+
+          <!-- ABA 2: EVOLUÇÃO DO MANDATO (NOVO) -->
+          <div id="bloco-evolucao-mandato" style="display: none;">
+              <div style="display: flex; gap: 1rem; justify-content: center; margin: 1.5rem 0; align-items: flex-end;">
+                  <div style="flex: 1; max-width: 350px;">
+                      <label style="font-weight: bold; color: #333;">Selecione o Prefeito e Mandato:</label>
+                      <select id="select-mandato" class="campo-filtro" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; margin-top: 5px;">
+                          <option value="">Selecione...</option>
+                          <option value="2012">Guilherme Ávila (2012 a 2015)</option>
+                          <option value="2016">Guilherme Ávila (2016 a 2019)</option>
+                          <option value="2020">Paula Lemos (2020 a 2023)</option>
+                          <option value="2024">Odair Silva (2024 a 2027)</option>
+                      </select>
+                  </div>
+                  <button onclick="gerarEvolucaoMandato()" class="botao" style="background-color: #0b4f6c; height: 41px;">Analisar Evolução</button>
+              </div>
+          </div>
+
+          <!-- ÁREA COMPARTILHADA: Tabela e Gráfico -->
+          <div id="tabela-comparativa" style="display: none; margin-top: 2rem;"></div>
+          
+          <div id="area-grafico-comparativo" style="display: none; margin-top: 2rem; max-width: 900px; margin-left: auto; margin-right: auto; padding: 1rem; background: #fff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+              <canvas id="graficoComparativo"></canvas>
+          </div>
+      </div>
+  </div>
+
+  <div id="modal-distribuicao" class="modal-overlay">
+      <div class="modal-content" style="max-width: 900px;">
+          <span class="fechar-modal" onclick="fecharModalDistribuicao()">&times;</span>
+          
+          <h2 style="color: #4d4d4d; margin-top: 0; text-align: center;">Execução do Orçamento 2026</h2>
+          <p style="text-align: center; color: #666; margin-top: -10px; margin-bottom: 20px;">Comparativo entre a Lei Orçamentária Anual e os gastos efetivados</p>
+          <hr style="border: 0; border-top: 1px solid #ddd; margin-bottom: 2rem;">
+
+          <div id="loading-distribuicao" style="text-align: center; margin: 3rem 0;">
+              <h3 style="color: #888;">⏳ Extraindo dados da base do Governo...</h3>
+          </div>
+
+          <div id="conteudo-distribuicao" style="display: none; overflow-x: auto;">
+              <table class="display" style="width:100%; border-collapse: collapse; text-align: left;">
+                  <thead>
+                      <tr style="background-color: #2a9d8f; color: white;">
+                          <th style="padding: 15px; border-bottom: 2px solid #ddd;">Área de Investimento</th>
+                          <th style="padding: 15px; border-bottom: 2px solid #ddd; text-align: right;">Orçamento Previsto (LOA)</th>
+                          <th style="padding: 15px; border-bottom: 2px solid #ddd; text-align: right;">Gasto Executado</th>
+                          <th style="padding: 15px; border-bottom: 2px solid #ddd; text-align: center;">Status de Consumo</th>
+                      </tr>
+                  </thead>
+                  <tbody id="corpo-tabela-distribuicao">
+                      <!-- As linhas serão injetadas pelo JavaScript -->
+                  </tbody>
+                  <tfoot>
+                      <tr style="background-color: #fcf9f9; font-weight: bold; font-size: 1.1rem; color: #333;">
+                          <td style="padding: 15px; border-top: 2px solid #ccc; color: #424242;">TOTAL GERAL DO MUNICÍPIO</td>
+                          <td id="lbl-loa-total" style="padding: 15px; border-top: 2px solid #ccc; color: #424242; text-align: right;"></td>
+                          <td id="lbl-real-total" style="padding: 15px; border-top: 2px solid #ccc; color: #424242; text-align: right;"></td>
+                          <td id="lbl-perc-total" style="padding: 15px; border-top: 2px solid #ccc; color: #424242; text-align: center;"></td>
+                      </tr>
+                  </tfoot>
+              </table>
+          </div>
+      </div>
+  </div>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css">
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script>
+// =====================================================================
+// FUNÇÕES DE ABRIR E FECHAR OS MODALS
+// =====================================================================
+
+// MODAL SERVIDORES
+function abrirModalServidores() {
+    document.getElementById('modal-servidores').style.display = 'block';
+    document.body.style.overflow = 'hidden'; 
+}
+
+function fecharModalServidores() {
+    // 1. Remove a trava de estilo forçada para permitir o fecho limpo
+    const estiloForcado = document.getElementById('estilo-auto-abrir');
+    if (estiloForcado) estiloForcado.remove();
+
+    // 2. Limpa e esconde o modal
+    document.getElementById('modal-servidores').style.display = 'none';
+    document.body.style.overflow = 'auto'; 
+    document.getElementById('form-servidores').reset();
+    document.getElementById('resultados-servidores').innerHTML = '<p style="text-align: center; color: #666;">Selecione o mês e ano acima para carregar a base de funcionários.</p>';
+    document.getElementById('areaTabela').style.display = 'none';
+    
+    if ($.fn.DataTable.isDataTable('#tabelaServidores')) {
+        $('#tabelaServidores').DataTable().clear().destroy();
+        document.getElementById('corpoTabela').innerHTML = '';
+    }
+
+    // 3. O SEGREDO: Se o cidadão veio da Home, o botão "X" devolve-o à Home!
+    if (window.veioDaHome) {
+        window.location.href = 'index.html';
+    }
+}
+
+// MODAL COMPARATIVO
+function abrirModalComparativo() {
+    document.getElementById('modal-comparativo').style.display = 'block';
+    document.body.style.overflow = 'hidden'; 
+}
+
+// MODAL COMPARATIVO
+function fecharModalComparativo() {
+    const estiloForcado = document.getElementById('estilo-auto-abrir');
+    if (estiloForcado) estiloForcado.remove();
+
+    document.getElementById('modal-comparativo').style.display = 'none';
+    document.body.style.overflow = 'auto'; 
+    document.getElementById('area-grafico-comparativo').style.display = 'none';
+    
+    document.getElementById('ano1').value = "";
+    document.getElementById('ano2').value = "";
+    document.getElementById('select-mandato').value = ""; 
+    
+    const areaTabela = document.getElementById('tabela-comparativa');
+    areaTabela.style.display = 'none';
+    areaTabela.innerHTML = '';
+    
+    // Devolve à página inicial se aplicável
+    if (window.veioDaHome) window.location.href = 'index.html';
+}
+
+// MODAL ORÇAMENTO (DISTRIBUIÇÃO)
+function fecharModalDistribuicao() {
+    // 1. Remove a trava de CSS (com segurança extra)
+    const estiloForcado = document.getElementById('estilo-auto-abrir');
+    if (estiloForcado) {
+        estiloForcado.parentNode.removeChild(estiloForcado);
+    }
+
+    // 2. Esconde a tela e devolve a rolagem à página
+    const modal = document.getElementById('modal-distribuicao');
+    if (modal) {
+        modal.setAttribute('style', 'display: none !important;');
+    }
+    document.body.style.overflow = 'auto';
+    
+    // 3. Reseta a tabela para o estado de carregamento
+    const conteudo = document.getElementById('conteudo-distribuicao');
+    const loading = document.getElementById('loading-distribuicao');
+    if (conteudo) conteudo.style.display = 'none';
+    if (loading) loading.style.display = 'block';
+
+    // 4. Devolve à página inicial se o utilizador veio de lá
+    if (window.veioDaHome) {
+        window.location.href = 'index.html';
+    }
+}
+
+// Fecha os modais ao clicar fora
+window.onclick = function(event) {
+    const modalServidores = document.getElementById('modal-servidores');
+    const modalComparativo = document.getElementById('modal-comparativo');
+    const modalDist = document.getElementById('modal-distribuicao');
+    if (event.target == modalServidores) fecharModalServidores();
+    if (event.target == modalComparativo) fecharModalComparativo();
+    if (event.target == modalDist) fecharModalDistribuicao();
+}
+
+// Trava do Período 2
+document.getElementById('ano1').addEventListener('change', function() {
+    const anoSelecionado = parseInt(this.value);
+    const selectAno2 = document.getElementById('ano2');
+
+    Array.from(selectAno2.options).forEach(opt => {
+        opt.disabled = false;
+        opt.style.display = 'block';
+    });
+
+    if (anoSelecionado) {
+        const anoBase = anoSelecionado - (anoSelecionado % 4);
+        Array.from(selectAno2.options).forEach(opt => {
+            const valorOpt = parseInt(opt.value);
+            if (valorOpt >= anoBase && valorOpt <= anoBase + 3) {
+                opt.disabled = true;
+                opt.style.display = 'none';
+            }
+        });
+
+        if (selectAno2.options[selectAno2.selectedIndex] && selectAno2.options[selectAno2.selectedIndex].disabled) {
+            selectAno2.value = "";
+        }
+    }
+});
+
+// =====================================================================
+// LÓGICA DE ALTERNAR ABAS NO COMPARATIVO
+// =====================================================================
+function alternarAbaGestao(aba) {
+    document.getElementById('tabela-comparativa').style.display = 'none';
+    document.getElementById('area-grafico-comparativo').style.display = 'none';
+
+    const btnComp = document.getElementById('btn-tab-comparativo');
+    const btnEvol = document.getElementById('btn-tab-evolucao');
+
+    if (aba === 'comparativo') {
+        document.getElementById('bloco-comparar-gestoes').style.display = 'block';
+        document.getElementById('bloco-evolucao-mandato').style.display = 'none';
+        btnComp.style.backgroundColor = '#0b4f6c'; btnComp.style.color = 'white';
+        btnEvol.style.backgroundColor = '#ddd'; btnEvol.style.color = '#333';
+    } else {
+        document.getElementById('bloco-comparar-gestoes').style.display = 'none';
+        document.getElementById('bloco-evolucao-mandato').style.display = 'block';
+        btnEvol.style.backgroundColor = '#0b4f6c'; btnEvol.style.color = 'white';
+        btnComp.style.backgroundColor = '#ddd'; btnComp.style.color = '#333';
+    }
+}
+
+// =====================================================================
+// LÓGICA: COMPARATIVO DIRETO DE GESTÕES (ABA 1)
+// =====================================================================
+async function gerarComparativo() {
+    const input1 = document.getElementById('ano1').value;
+    const input2 = document.getElementById('ano2').value;
+    const areaTabela = document.getElementById('tabela-comparativa');
+    const areaGrafico = document.getElementById('area-grafico-comparativo');
+
+    if (!input1 || !input2) {
+        alert("Por favor, selecione os dois períodos!");
+        return;
+    }
+
+    // A MÁGICA: Avalia as duas escolhas e força o ano mais antigo a ser sempre o "ano1" (Base de cálculo)
+    const ano1 = Math.min(parseInt(input1), parseInt(input2)).toString();
+    const ano2 = Math.max(parseInt(input1), parseInt(input2)).toString();
+
+    areaGrafico.style.display = 'none';
+    areaTabela.innerHTML = `<p style="text-align:center; color: #0b4f6c; font-weight: bold; font-size: 1.1rem;">⏳ Extraindo dados sobre o comparativo de gestões... Aguarde.</p>`;
+    areaTabela.style.display = 'block';
+
+    try {
+        const [respPref1, respPref2] = await Promise.all([
+            fetch(`http://127.0.0.1:5050/api/prefeito?ano=${ano1}`),
+            fetch(`http://127.0.0.1:5050/api/prefeito?ano=${ano2}`)
+        ]);
+
+        const dadosPref1 = await respPref1.json();
+        const dadosPref2 = await respPref2.json();
+
+        async function somarAno(ano, tipo) {
+            const promessas = [];
+            for(let m = 1; m <= 12; m++) {
+                let mStr = m.toString().padStart(2, '0');
+                promessas.push(
+                    fetch(`http://127.0.0.1:5050/api/${tipo}?ano=${ano}&mes=${mStr}`)
+                    .then(r => r.json())
+                    .then(d => { return (d.dados && d.dados.length > 0) ? d.dados.reduce((soma, item) => soma + item.valor, 0) : 0; })
+                    .catch(() => 0) 
+                );
+            }
+            const resultados = await Promise.all(promessas);
+            return resultados.reduce((a, b) => a + b, 0);
+        }
+
+        const receitaAno1 = await somarAno(ano1, 'receitas');
+        const despesaAno1 = await somarAno(ano1, 'despesas');
+        const receitaAno2 = await somarAno(ano2, 'receitas');
+        const despesaAno2 = await somarAno(ano2, 'despesas');
+
+        const dadosAno1 = { despesa: despesaAno1, receita: receitaAno1, prefeito: dadosPref1.prefeito, periodo: dadosPref1.periodo };
+        const dadosAno2 = { despesa: despesaAno2, receita: receitaAno2, prefeito: dadosPref2.prefeito, periodo: dadosPref2.periodo };
+
+        function obterPopulacao(ano) {
+            const popIBGE = {
+                2014: 116500, 2015: 118872, 2016: 119948, 2017: 120638,
+                2018: 121345, 2019: 122098, 2020: 122833, 2021: 123546, 2022: 122553,
+                2023: 122553, 2024: 122553, 2025: 122553, 2026: 122553
+            };
+            return popIBGE[parseInt(ano)] || 122553; 
+        }
+
+        const popAno1 = obterPopulacao(ano1);
+        const popAno2 = obterPopulacao(ano2);
+
+        const variacaoReceita = dadosAno1.receita > 0 ? ((dadosAno2.receita - dadosAno1.receita) / dadosAno1.receita) * 100 : 0;
+        const variacaoDespesa = dadosAno1.despesa > 0 ? ((dadosAno2.despesa - dadosAno1.despesa) / dadosAno1.despesa) * 100 : 0;
+        const perCapita1 = dadosAno1.despesa / popAno1;
+        const perCapita2 = dadosAno2.despesa / popAno2;
+        const variacaoPerCapita = perCapita1 > 0 ? ((perCapita2 - perCapita1) / perCapita1) * 100 : 0;
+
+        const formatarReal = (v) => v === 0 ? '<span style="color:#888; font-size:0.85em;">S/ Dados</span>' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const formatarEvolucao = (v, baseAnterior) => baseAnterior > 0 ? `<span style="${v > 0 ? 'color: #2e7d32;' : (v < 0 ? 'color: #c62828;' : 'color: gray;')} font-weight: bold;">${v.toFixed(2)}%</span>` : '<span style="color:#888;">-</span>';
+
+        const html = `
+            <table style="width: 100%; border-collapse: collapse; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 2rem;">
+                <thead style="background-color: #0b4f6c; color: white;">
+                    <tr>
+                        <th style="padding: 1rem; text-align: left;">Indicador</th>
+                        <th style="padding: 1rem; text-align: right;">${ano1}<br><small style="font-weight:normal; color:#e2e2e2;">${dadosAno1.prefeito}</small></th>
+                        <th style="padding: 1rem; text-align: right;">${ano2}<br><small style="font-weight:normal; color:#e2e2e2;">${dadosAno2.prefeito}</small></th>
+                        <th style="padding: 1rem; text-align: right;">Evolução (%)</th>
+                    </tr>
+                </thead>
+                <tbody style="background-color: white;">
+                    <tr style="border-bottom: 1px solid #ddd;">
+                        <td style="padding: 1rem; font-weight: bold;">Total Arrecadado</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarReal(dadosAno1.receita)}</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarReal(dadosAno2.receita)}</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarEvolucao(variacaoReceita, dadosAno1.receita)}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #ddd;">
+                        <td style="padding: 1rem; font-weight: bold;">Total Gasto</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarReal(dadosAno1.despesa)}</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarReal(dadosAno2.despesa)}</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarEvolucao(variacaoDespesa, dadosAno1.despesa)}</td>
+                    </tr>
+                    <tr style="background-color: #f8f9fa;">
+                        <td style="padding: 1rem; font-weight: bold; color: #0b4f6c;">Gasto Per Capita</td>
+                        <td style="padding: 1rem; text-align: right; font-weight: bold; color: #0b4f6c;">${formatarReal(perCapita1)}</td>
+                        <td style="padding: 1rem; text-align: right; font-weight: bold; color: #0b4f6c;">${formatarReal(perCapita2)}</td>
+                        <td style="padding: 1rem; text-align: right;">${formatarEvolucao(variacaoPerCapita, perCapita1)}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div style="text-align: center; margin-bottom: 1.5rem;">
+                <button type="button" id="btn-mostrar-grafico" onclick="exibirGraficoComparativo()" class="botao" style="background-color: #0b4f6c; padding: 10px 25px; font-size: 1.1rem; display: inline-flex; align-items: center; gap: 8px; border: none; color: white; cursor: pointer; border-radius: 6px;">
+                    📊 Visualizar Gráfico
+                </button>
+                <button type="button" id="btn-baixar-grafico" onclick="window.baixarGraficoComparativo()" class="botao" style="display: none; background-color: #8b0000; padding: 10px 25px; font-size: 1.1rem; align-items: center; gap: 8px; border: none; color: white; cursor: pointer; border-radius: 6px;">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                    Baixar Gráfico (PNG)
+                </button>
+            </div>
+        `;
+        areaTabela.innerHTML = html;
+
+        if (dadosAno1.receita > 0 || dadosAno2.receita > 0 || dadosAno1.despesa > 0 || dadosAno2.despesa > 0) {
+            const ctx = document.getElementById('graficoComparativo').getContext('2d');
+            if (window.meuGraficoComparativo) window.meuGraficoComparativo.destroy();
+
+            const pluginFundoBranco = {
+                id: 'fundoBranco',
+                beforeDraw: (chart) => {
+                    const contexto = chart.canvas.getContext('2d');
+                    contexto.save();
+                    contexto.globalCompositeOperation = 'destination-over';
+                    contexto.fillStyle = 'white';
+                    contexto.fillRect(0, 0, chart.width, chart.height);
+                    contexto.restore();
+                }
+            };
+
+            window.meuGraficoComparativo = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Total Arrecadado (Receitas)', 'Total Gasto (Despesas)'],
+                    datasets: [
+                        { label: `${dadosAno1.prefeito} (${ano1})`, data: [dadosAno1.receita, dadosAno1.despesa], backgroundColor: 'rgba(11, 79, 108, 0.8)', borderColor: '#0b4f6c', borderWidth: 1, borderRadius: 4 },
+                        { label: `${dadosAno2.prefeito} (${ano2})`, data: [dadosAno2.receita, dadosAno2.despesa], backgroundColor: 'rgba(139, 0, 0, 0.8)', borderColor: '#8b0000', borderWidth: 1, borderRadius: 4 }
+                    ]
+                },
+                plugins: [pluginFundoBranco],
+                options: { responsive: true }
+            });
+        } else {
+            areaGrafico.style.display = 'none';
+        }
+
+    } catch (e) {
+        areaTabela.innerHTML = `<p style="color:red; text-align:center;">Erro ao consultar dados: ${e.message}</p>`;
+    }
+}
+
+// =====================================================================
+// LÓGICA: EVOLUÇÃO ANUAL DE UM MANDATO (ABA 2)
+// =====================================================================
+async function gerarEvolucaoMandato() {
+    const anoBaseStr = document.getElementById('select-mandato').value;
+    const textoPrefeito = document.getElementById('select-mandato').options[document.getElementById('select-mandato').selectedIndex].text;
+    
+    if (!anoBaseStr) {
+        alert("Por favor, selecione um Prefeito / Mandato!");
+        return;
+    }
+
+    const anoBase = parseInt(anoBaseStr);
+    const areaTabela = document.getElementById('tabela-comparativa');
+    const areaGrafico = document.getElementById('area-grafico-comparativo');
+
+    areaGrafico.style.display = 'none';
+    areaTabela.innerHTML = `<p style="text-align:center; color: #0b4f6c; font-weight: bold; font-size: 1.1rem;">⏳ A extrair os 4 anos de mandato (${anoBase} a ${anoBase+3})... Aguarde.</p>`;
+    areaTabela.style.display = 'block';
+
+    try {
+        async function somarEvolucao(ano, tipo) {
+            const promessas = [];
+            for(let m = 1; m <= 12; m++) {
+                let mStr = m.toString().padStart(2, '0');
+                promessas.push(
+                    fetch(`http://127.0.0.1:5050/api/${tipo}?ano=${ano}&mes=${mStr}`)
+                    .then(r => r.json())
+                    .then(d => { return (d.dados && d.dados.length > 0) ? d.dados.reduce((soma, item) => soma + item.valor, 0) : 0; })
+                    .catch(() => 0) 
+                );
+            }
+            const resultados = await Promise.all(promessas);
+            return resultados.reduce((a, b) => a + b, 0);
+        }
+
+        const anos = [anoBase, anoBase + 1, anoBase + 2, anoBase + 3];
+        const dadosEvolucao = [];
+
+        for (const a of anos) {
+            const rec = await somarEvolucao(a, 'receitas');
+            const des = await somarEvolucao(a, 'despesas');
+            dadosEvolucao.push({ ano: a, receita: rec, despesa: des });
+        }
+
+        const formatarReal = (v) => v === 0 ? '<span style="color:#888;">-</span>' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+        let linhasHtml = '';
+        let totalRec = 0; let totalDes = 0;
+
+        dadosEvolucao.forEach(d => {
+            if (d.ano < 2014) {
+                // Se for 2012 ou 2013, mescla as 3 colunas e exibe a mensagem amigável
+                linhasHtml += `
+                    <tr style="border-bottom: 1px solid #ddd; background-color: #fafafa;">
+                        <td style="padding: 1rem; text-align: center; font-weight: bold;">${d.ano}</td>
+                        <td colspan="3" style="padding: 1rem; text-align: center; color: #888; font-style: italic;">Não possuímos dados oficiais do governo para este período.</td>
+                    </tr>
+                `;
+            } else {
+                // Para 2014 em diante, soma os valores e desenha as colunas normais
+                totalRec += d.receita;
+                totalDes += d.despesa;
+                linhasHtml += `
+                    <tr style="border-bottom: 1px solid #ddd;">
+                        <td style="padding: 1rem; text-align: center; font-weight: bold;">${d.ano}</td>
+                        <td style="padding: 1rem; text-align: right; color: #222222;">${formatarReal(d.receita)}</td>
+                        <td style="padding: 1rem; text-align: right; color: #222222;">${formatarReal(d.despesa)}</td>
+                        <td style="padding: 1rem; text-align: right; font-weight: bold; color: ${d.receita - d.despesa >= 0 ? '#2e7d32' : '#c62828'};">${formatarReal(d.receita - d.despesa)}</td>
+                    </tr>
+                `;
+            }
+        });
+
+        areaTabela.innerHTML = `
+            <h3 style="color: #0b4f6c; text-align: center; margin-bottom: 1rem;">${textoPrefeito}</h3>
+            <table style="width: 100%; border-collapse: collapse; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 2rem;">
+                <thead style="background-color: #0b4f6c; color: white;">
+                    <tr>
+                        <th style="padding: 1rem; text-align: center;">Ano</th>
+                        <th style="padding: 1rem; text-align: right;">Arrecadado (R$)</th>
+                        <th style="padding: 1rem; text-align: right;">Gasto (R$)</th>
+                        <th style="padding: 1rem; text-align: right;">Saldo em Caixa (R$)</th>
+                    </tr>
+                </thead>
+                <tbody style="background-color: white;">
+                    ${linhasHtml}
+                    <tr style="background-color: #f8f9fa; font-weight: bold;">
+                        <td style="padding: 1rem; text-align: center; color: #000000;">TOTAL DO MANDATO</td>
+                        <td style="padding: 1rem; text-align: right; color: #161616;">${formatarReal(totalRec)}</td>
+                        <td style="padding: 1rem; text-align: right; color: #161616;">${formatarReal(totalDes)}</td>
+                        <td style="padding: 1rem; text-align: right; color: ${totalRec - totalDes >= 0 ? '#2e7d32' : '#c62828'};">${formatarReal(totalRec - totalDes)}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div style="text-align: center; margin-bottom: 1.5rem;">
+                <button type="button" id="btn-mostrar-grafico" onclick="exibirGraficoComparativo()" class="botao" style="background-color: #0b4f6c; padding: 10px 25px; font-size: 1.1rem; display: inline-flex; align-items: center; gap: 8px; border: none; color: white; cursor: pointer; border-radius: 6px;">
+                    📊 Visualizar Gráfico
+                </button>
+                <button type="button" id="btn-baixar-grafico" onclick="window.baixarGraficoComparativo()" class="botao" style="display: none; background-color: #8b0000; padding: 10px 25px; font-size: 1.1rem; align-items: center; gap: 8px; border: none; color: white; cursor: pointer; border-radius: 6px;">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                    Baixar Gráfico (PNG)
+                </button>
+            </div>
+        `;
+
+        const ctx = document.getElementById('graficoComparativo').getContext('2d');
+        if (window.meuGraficoComparativo) window.meuGraficoComparativo.destroy();
+
+        const pluginFundoBranco = {
+            id: 'fundoBranco',
+            beforeDraw: (chart) => {
+                const ctxPlugin = chart.canvas.getContext('2d');
+                ctxPlugin.save();
+                ctxPlugin.globalCompositeOperation = 'destination-over';
+                ctxPlugin.fillStyle = 'white';
+                ctxPlugin.fillRect(0, 0, chart.width, chart.height);
+                ctxPlugin.restore();
+            }
+        };
+
+        window.meuGraficoComparativo = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: anos.map(String),
+                datasets: [
+                    { label: 'Total Arrecadado (Receitas)', data: dadosEvolucao.map(d => d.receita), backgroundColor: 'rgba(11, 79, 108, 0.8)', borderColor: '#0b4f6c', borderWidth: 1, borderRadius: 4 },
+                    { label: 'Total Gasto (Despesas)', data: dadosEvolucao.map(d => d.despesa), backgroundColor: 'rgba(139, 0, 0, 0.8)', borderColor: '#8b0000', borderWidth: 1, borderRadius: 4 }
+                ]
+            },
+            plugins: [pluginFundoBranco],
+            options: { responsive: true }
+        });
+
+    } catch (e) {
+        areaTabela.innerHTML = `<p style="color:red; text-align:center;">Erro ao consultar evolução: ${e.message}</p>`;
+    }
+}
+
+window.baixarGraficoComparativo = function() {
+    if (window.meuGraficoComparativo) {
+        const link = document.createElement('a');
+        link.download = 'Comparativo_Gestoes_Barretos.png';
+        link.href = window.meuGraficoComparativo.toBase64Image();
+        link.click();
+    }
+};
+
+// =====================================================================
+// LÓGICA DO PAINEL DE SERVIDORES (INTEGRADO COM DATATABLES)
+// =====================================================================
+
+document.getElementById('form-servidores').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const selectAno = document.getElementById('filtro-ano-servidor').value;
+    const selectMes = document.getElementById('filtro-mes-servidor');
+    const inputCargo = document.getElementById('filtro-cargo-servidor').value;
+    const mesText = selectMes.options[selectMes.selectedIndex].text;
+    const mesParaAPI = (selectMes.value !== "00" && selectMes.value !== "") ? mesText : "Todos os Meses";
+    
+    const areaResultados = document.getElementById('resultados-servidores');
+    const areaTabela = document.getElementById('areaTabela');
+    
+    areaResultados.innerHTML = `<p style="text-align: center; color: #8b0000; font-weight: bold; font-size: 1.2rem;">⏳ Conectando ao Banco de Dados...</p>`;
+    areaTabela.style.display = 'block';
+    
+    setTimeout(() => { areaResultados.innerHTML = ''; }, 1000);
+
+    if ($.fn.DataTable.isDataTable('#tabelaServidores')) {
+        $('#tabelaServidores').DataTable().destroy();
+    }
+
+    $('#tabelaServidores').DataTable({
+        serverSide: true,
+        processing: true, 
+        ajax: {
+            url: 'http://127.0.0.1:5050/api/servidores',
+            type: 'GET',
+            data: function (d) {
+                d.ano = selectAno;
+                d.mes = mesParaAPI;
+                d.cargo = inputCargo;
+            },
+            error: function (xhr, error, thrown) {
+                areaResultados.innerHTML = `<p style="color:red; text-align:center;">Erro ao conectar ao servidor. O seu ficheiro app.py está rodando?</p>`;
+            }
+        },
+        columns: [
+            { data: 'mes' },
+            { data: 'nome' },
+            { data: 'cargo' },
+            { 
+                data: 'salario',
+                className: 'text-right',
+                render: function (data) {
+                    return parseFloat(data).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                }
+            }
+        ],
+        dom: 'Bfrtip',
+        buttons: [
+            {
+                text: '📊 Baixar Planilha Completa (Excel)',
+                className: 'botao',
+                action: async function ( e, dt, node, config ) {
+                    const btnTextoOriginal = node.text();
+                    node.text('⏳ Extraindo dados da base...');
+                    try {
+                        const termoPesquisa = dt.search();
+                        const url = `http://127.0.0.1:5050/api/servidores?ano=${selectAno}&mes=${mesParaAPI}&cargo=${inputCargo}&search[value]=${encodeURIComponent(termoPesquisa)}&start=0&length=-1`;
+                        const resposta = await fetch(url);
+                        const json = await resposta.json();
+                        let csvContent = "data:text/csv;charset=utf-8,\uFEFF"; 
+                        csvContent += "Mês Referência;Nome do Servidor;Cargo / Função;Remuneração (R$)\n";
+                        json.data.forEach(d => {
+                            const nome = d.nome.replace(/;/g, ',');
+                            const cargo = d.cargo.replace(/;/g, ',');
+                            const salario = parseFloat(d.salario).toFixed(2).replace('.', ','); 
+                            csvContent += `${d.mes};${nome};${cargo};${salario}\n`;
+                        });
+                        const encodedUri = encodeURI(csvContent);
+                        const link = document.createElement("a");
+                        link.setAttribute("href", encodedUri);
+                        link.setAttribute("download", `Folha_Servidores_${selectAno}.csv`);
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    } catch(err) {
+                        alert("Erro ao gerar planilha.");
+                    } finally {
+                        node.text(btnTextoOriginal);
+                    }
+                }
+            },
+            {
+                text: '📄 Baixar PDF do Período Todo',
+                className: 'botao',
+                action: async function ( e, dt, node, config ) {
+                    const btnTextoOriginal = node.text();
+                    node.text('⏳ Gerando PDF... (Pode demorar)');
+                    try {
+                        const termoPesquisa = dt.search();
+                        const url = `http://127.0.0.1:5050/api/servidores?ano=${selectAno}&mes=${mesParaAPI}&cargo=${inputCargo}&search[value]=${encodeURIComponent(termoPesquisa)}&start=0&length=-1`;
+                        const resposta = await fetch(url);
+                        const json = await resposta.json();
+                        const { jsPDF } = window.jspdf;
+                        const doc = new jsPDF();
+                        doc.setFontSize(16);
+                        doc.setTextColor(139, 0, 0); 
+                        doc.text(`Folha de Pagamento - ${mesParaAPI} / ${selectAno}`, 14, 20);
+                        if (termoPesquisa) {
+                            doc.setFontSize(10);
+                            doc.setTextColor(100, 100, 100);
+                            doc.text(`Filtro adicional aplicado na lupa: "${termoPesquisa}"`, 14, 26);
+                        }
+                        let totalSalarios = 0;
+                        const linhas = json.data.map(d => {
+                            totalSalarios += parseFloat(d.salario);
+                            return [d.mes, d.nome, d.cargo, parseFloat(d.salario).toLocaleString('pt-BR', { minimumFractionDigits: 2 })];
+                        });
+                        doc.autoTable({
+                            startY: termoPesquisa ? 30 : 28,
+                            head: [["Mês", "Nome do Servidor", "Cargo", "Remuneração (R$)"]],
+                            body: linhas,
+                            foot: [["", "", "TOTAL GERAL DA SELEÇÃO:", totalSalarios.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })]],
+                            theme: 'striped',
+                            headStyles: { fillColor: [139, 0, 0] },
+                            footStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold' },
+                            styles: { fontSize: 8 }
+                        });
+                        doc.save(`Servidores_Consolidado_${selectAno}.pdf`);
+                    } catch(err) {
+                        alert("Erro ao gerar PDF.");
+                    } finally {
+                        node.text(btnTextoOriginal);
+                    }
+                }
+            }
+        ],
+        language: {
+            url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/pt-BR.json',
+            emptyTable: "Nenhum servidor encontrado para estes parâmetros."
+        },
+        pageLength: 25 
+    });
+});
+
+// =====================================================================
+// DISTRIBUIÇÃO ORÇAMENTÁRIA
+// =====================================================================
+function abrirModalDistribuicao() {
+    document.getElementById('modal-distribuicao').style.display = 'block';
+    carregarTabelaDistribuicao();
+}
+
+async function carregarTabelaDistribuicao() {
+    document.getElementById('loading-distribuicao').style.display = 'block';
+    document.getElementById('conteudo-distribuicao').style.display = 'none';
+
+    const orcamentoPrevisto = {
+        saude: 382790610.78, educacao: 256434000.00, infra: 69544700.00, total: 1302000000.00    
+    };
+    
+    // Filtros de categorização mais robustos
+    const termosSaude = ['saude', 'saúde', 'hospital', 'misericordia', 'medicamento', 'medico', 'clinica', 'farmacia', 'saneamento', 'agua', 'esgoto', 'saae', 'drenagem'];
+    const termosEducacao = ['educacao', 'educação', 'escola', 'ensino', 'professor', 'didático', 'creche', 'merenda', 'cultura', 'evento', 'festa', 'show', 'teatro', 'museu', 'fundeb'];
+    const termosInfra = ['infraestrutura', 'urbano', 'asfalto', 'engenharia', 'pavimentacao', 'iluminacao'];
+    let gastoReal = { saude: 0, educacao: 0, infra: 0, outros: 0, total: 0 };
+
+    try {
+        const promessas = [];
+        // O loop busca mês a mês explicitamente para obter as categorias completas, não o resumo
+        for(let m = 1; m <= 12; m++) {
+            let mStr = m.toString().padStart(2, '0');
+            promessas.push(
+                fetch(`http://127.0.0.1:5050/api/despesas?ano=2026&mes=${mStr}`)
+                .then(res => res.json())
+                .catch(() => ({ dados: [] }))
+            );
+        }
+        
+        const resultados = await Promise.all(promessas);
+
+        resultados.forEach(res => {
+            if (res.dados && res.dados.length > 0) {
+                res.dados.forEach(item => {
+                    // Prevenção de erro caso o valor venha nulo
+                    const valorLancamento = parseFloat(item.valor) || 0;
+                    gastoReal.total += valorLancamento;
+                    
+                    const texto = `${item.categoria} ${item.fornecedor} ${item.descricao}`.toLowerCase();
+                    
+                    if (termosSaude.some(t => texto.includes(t))) {
+                        gastoReal.saude += valorLancamento;
+                    } else if (termosEducacao.some(t => texto.includes(t))) {
+                        gastoReal.educacao += valorLancamento;
+                    } else if (termosInfra.some(t => texto.includes(t))) {
+                        gastoReal.infra += valorLancamento;
+                    } else {
+                        gastoReal.outros += valorLancamento;
+                    }
+                });
+            }
+        });
+
+        const formataBR = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+        
+        const gerarBarra = (gasto, previsto) => {
+            let perc = previsto > 0 ? ((gasto / previsto) * 100).toFixed(1) : 0;
+            let corBarra = perc > 90 ? '#d32f2f' : (perc > 70 ? '#f57c00' : '#2a9d8f');
+            return `
+                <div style="font-weight: bold; margin-bottom: 3px;">${perc}%</div>
+                <div style="background-color: #e2e8f0; border-radius: 5px; height: 8px; width: 100%;">
+                    <div style="background-color: ${corBarra}; height: 100%; border-radius: 5px; width: ${perc > 100 ? 100 : perc}%;"></div>
+                </div>
+            `;
+        };
+
+        const corpoTabela = document.getElementById('corpo-tabela-distribuicao');
+        corpoTabela.innerHTML = `
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 15px; font-weight: bold; color: rgba(0, 0, 0, 0.671);">Saúde e Saneamento</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(orcamentoPrevisto.saude)}</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(gastoReal.saude)}</td>
+                <td style="padding: 15px; text-align: center;">${gerarBarra(gastoReal.saude, orcamentoPrevisto.saude)}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 15px; font-weight: bold; color: rgba(0, 0, 0, 0.671);">Educação e Cultura</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(orcamentoPrevisto.educacao)}</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(gastoReal.educacao)}</td>
+                <td style="padding: 15px; text-align: center;">${gerarBarra(gastoReal.educacao, orcamentoPrevisto.educacao)}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 15px; font-weight: bold; color: rgba(0, 0, 0, 0.671);">Infraestrutura e Urbanismo</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(orcamentoPrevisto.infra)}</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(gastoReal.infra)}</td>
+                <td style="padding: 15px; text-align: center;">${gerarBarra(gastoReal.infra, orcamentoPrevisto.infra)}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #eee; background-color: #fafafa;">
+                <td style="padding: 15px; font-style: italic; font-weight: bold; color: #424242;">Outras Áreas (Administração, Câmara, etc.)</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(orcamentoPrevisto.total - (orcamentoPrevisto.saude + orcamentoPrevisto.educacao + orcamentoPrevisto.infra))}</td>
+                <td style="padding: 15px; text-align: right; color: #424242;">${formataBR(gastoReal.outros)}</td>
+                <td style="padding: 15px; text-align: center;">${gerarBarra(gastoReal.outros, (orcamentoPrevisto.total - (orcamentoPrevisto.saude + orcamentoPrevisto.educacao + orcamentoPrevisto.infra)))}</td>
+            </tr>
+        `;
+
+        document.getElementById('lbl-loa-total').innerText = formataBR(orcamentoPrevisto.total);
+        document.getElementById('lbl-real-total').innerText = formataBR(gastoReal.total);
+        
+        let percTotal = ((gastoReal.total / orcamentoPrevisto.total) * 100).toFixed(1);
+        document.getElementById('lbl-perc-total').innerHTML = `<span style="color: ${percTotal > 100 ? 'red' : 'green'};">${percTotal}% Utilizado</span>`;
+
+        document.getElementById('loading-distribuicao').style.display = 'none';
+        document.getElementById('conteudo-distribuicao').style.display = 'block';
+
+    } catch (error) {
+        document.getElementById('loading-distribuicao').innerHTML = '<p style="color: red;">Erro ao buscar dados. O servidor Python está a correr?</p>';
+    }
+}
+
+// AUTOMAÇÃO DA PÁGINA INICIAL
+document.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const acaoAutomatica = urlParams.get('auto');
+    const anoFiltro = urlParams.get('ano');
+
+    if (acaoAutomatica === 'servidores') {
+        const selectAno = document.getElementById('filtro-ano-servidor');
+        if (selectAno && anoFiltro) selectAno.value = anoFiltro;
+        
+        const btnBuscar = document.querySelector('#form-servidores button[type="submit"]');
+        if (btnBuscar) btnBuscar.click();
+        
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+    } else if (acaoAutomatica === 'comparativo') {
+        // Apenas abre (a visibilidade já está tratada pelo CSS), não pesquisa nada
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+    } else if (acaoAutomatica === 'orcamento') {
+        // Dispara a extração de dados e construção da tabela
+        carregarTabelaDistribuicao();
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+});
+
+window.exibirGraficoComparativo = function() {
+    // Mostra a área do gráfico
+    document.getElementById('area-grafico-comparativo').style.display = 'block';
+    
+    // Esconde o botão "Visualizar Gráfico"
+    document.getElementById('btn-mostrar-grafico').style.display = 'none';
+    
+    // Mostra o botão "Baixar Gráfico (PNG)"
+    document.getElementById('btn-baixar-grafico').style.display = 'inline-flex';
+    
+    // Redimensiona o gráfico para evitar bugs visuais ao sair do display: none
+    if (window.meuGraficoComparativo) {
+        window.meuGraficoComparativo.resize();
+    }
+};
+</script>
+
+</script>
+
+<!-- ========================================== -->
+  <!-- INÍCIO DO BOTÃO FLUTUANTE "VOLTAR AO TOPO" -->
+  <!-- ========================================== -->
+  <button id="btnVoltarTopo" onclick="voltarAoTopo()" title="Voltar ao início">
+    <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+        <path d="M12 19V5M5 12l7-7 7 7"/>
+    </svg>
+  </button>
+
+  <style>
+    #btnVoltarTopo {
+        display: none; /* Escondido por padrão */
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        z-index: 999;
+        border: none;
+        outline: none;
+        background-color: #0b4f6c; /* Azul do seu tema */
+        color: white;
+        cursor: pointer;
+        padding: 12px;
+        border-radius: 50%;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        transition: background-color 0.3s, transform 0.2s;
+    }
+
+    #btnVoltarTopo:hover {
+        background-color: #8b0000; /* Vermelho do seu tema */
+        transform: scale(1.1); /* Efeito de crescer ao passar o rato */
+    }
+  </style>
+
+  <script>
+    // Mostra o botão quando a pessoa desce 300px da página
+    window.addEventListener('scroll', function() {
+        const botao = document.getElementById("btnVoltarTopo");
+        if (document.body.scrollTop > 300 || document.documentElement.scrollTop > 300) {
+            botao.style.display = "block";
+        } else {
+            botao.style.display = "none";
+        }
+    });
+
+    // Função que leva suavemente para cima
+    function voltarAoTopo() {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    }
+</script>
+
+</body>
+</html>

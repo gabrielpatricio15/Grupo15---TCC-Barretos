@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel de Obras | Transparência Barretos</title>
+  <link rel="stylesheet" href="css/estilo.css">
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+  <script>
+    // 1. DICIONÁRIO DE TRADUÇÃO DE ERROS
+    function traduzirErro(mensagemOriginal) {
+        if (!mensagemOriginal) return { texto: "Erro desconhecido sem mensagem.", alvo: "body" };
+        let msg = mensagemOriginal.toString().toLowerCase();
+        
+        if (msg.includes('graficoinvestimentos')) return { texto: "O sistema tentou desenhar o 'Gráfico de Investimentos', mas ele não existe no ecrã.", alvo: "#graficoExecutado" };
+        if (msg.includes('getcontext')) return { texto: "Um dos painéis de gráficos falhou ao tentar ser desenhado no ecrã.", alvo: "canvas" };
+        if (msg.includes('failed to fetch') || msg.includes('network error') || msg.includes('falha ao fazer o fetch')) {
+            return { texto: "Falha de comunicação: O Servidor Python (Banco de Dados) não responde. Verifique se o servidor está ligado.", alvo: "form, .filtro-bar, .container" };
+        }
+        if (msg.includes('is not defined')) {
+            let variavel = mensagemOriginal.split(' ')[0] || 'Desconhecida';
+            return { texto: `Erro de código: A função ou elemento '${variavel}' não foi encontrado na página.`, alvo: "body" };
+        }
+        if (msg.includes('null (reading') || msg.includes('undefined (reading')) {
+            return { texto: "O sistema tentou ler ou alterar um painel, botão ou tabela que não existe ou foi apagado.", alvo: "body" };
+        }
+        if (msg.includes('unexpected token') || msg.includes('json')) {
+            return { texto: "O servidor Python devolveu um erro interno (HTML/Texto) em vez dos dados corretos (JSON).", alvo: "body" };
+        }
+        if (msg.includes('datatables')) {
+            return { texto: "Erro na Tabela de Dados: Falha ao carregar, paginar ou processar as informações do banco.", alvo: "table" };
+        }
+        
+        return { texto: `Erro detetada: ${mensagemOriginal}`, alvo: "body" };
+    }
+
+    function registarErroNoSistema(nivel, mensagem) {
+        let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+        
+        // Filtro muito curto (apenas 1 segundo) apenas para evitar que o navegador trave em loops infinitos, mas regista tudo!
+        if (logs.length > 0 && logs[0].mensagem.includes(traduzirErro(mensagem).texto.substring(0, 20)) && (Date.now() - logs[0].id) < 1000) {
+            return; 
+        }
+
+        let erroFormatado = traduzirErro(mensagem);
+        let paginaAtual = window.location.pathname.split('/').pop() || 'index.html';
+        let separador = window.location.search.includes('?') ? '&' : '?';
+        let urlComMarcador = paginaAtual + window.location.search + separador + "destacar_erro=" + encodeURIComponent(erroFormatado.alvo);
+
+        logs.unshift({
+            id: Date.now(),
+            data: new Date().toLocaleString('pt-BR'),
+            nivel: nivel,
+            modulo: paginaAtual,
+            mensagem: erroFormatado.texto,
+            url_origem: urlComMarcador
+        });
+        
+        if (logs.length > 100) logs.pop(); // Aumentado para guardar até os últimos 100 erros (Visibilidade Total)
+        localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+    }
+
+    // 1. CAPTURA ERROS GLOBAIS DE JAVASCRIPT
+    window.addEventListener('error', function(event) {
+        registarErroNoSistema('CRÍTICO', event.message || 'Erro de Script Desconhecido');
+    });
+
+    // 2. CAPTURA FALHAS DE FETCH E PROMISES REJEITADAS (Sem restrição de tempo)
+    window.addEventListener('unhandledrejection', function(event) {
+        let msg = event.reason ? (event.reason.message || event.reason) : 'Falha na conexão de rede com a API.';
+        registarErroNoSistema('AVISO', msg);
+    });
+
+    // 3. CAPTURA ERROS ESCONDIDOS NO CONSOLE DO NAVEGADOR
+    const consoleErrorOriginal = console.error;
+    console.error = function(...args) {
+        let mensagem = args.map(a => (typeof a === 'object' && a !== null ? JSON.stringify(a) : a)).join(' ');
+        registarErroNoSistema('CRÍTICO (Oculto)', mensagem);
+        consoleErrorOriginal.apply(console, args); // Mantém o erro no console original
+    };
+
+    // 4. CAPTURA ERROS ESPECÍFICOS DO DATATABLES
+    // Oculta as mensagens nativas feias e envia para o painel de administração
+    if (typeof $ !== 'undefined' && $.fn && $.fn.dataTable) {
+        $.fn.dataTable.ext.errMode = 'none'; // Desliga os alerts irritantes
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof $ !== 'undefined') {
+            $(document).on('error.dt', function (e, settings, techNote, message) {
+                registarErroNoSistema('CRÍTICO', 'DataTables: ' + message);
+            });
+        }
+    });
+
+    // MARCADOR VISUAL DO MÓDULO AVARIADO
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const alvo = urlParams.get('destacar_erro');
+        
+        if (alvo && alvo !== 'body') {
+            setTimeout(() => {
+                let elementos = document.querySelectorAll(alvo);
+                let elemento = elementos.length > 1 ? elementos[elementos.length - 1] : elementos[0];
+                
+                if (elemento) {
+                    let container = (elemento.tagName !== 'CANVAS' && elemento.tagName !== 'TABLE' && elemento.tagName !== 'FORM') ? elemento : (elemento.closest('.card') || elemento.parentNode);
+                    
+                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    container.style.transition = 'all 0.5s ease';
+                    container.style.boxShadow = '0 0 0 4px #ffb300, 0 10px 30px rgba(139,0,0,0.15)';
+                    container.style.backgroundColor = '#fffbf0'; 
+                    container.style.position = 'relative';
+                    
+                    let etiqueta = document.createElement('div');
+                    etiqueta.innerHTML = '🔍 Módulo Avariado';
+                    etiqueta.style.cssText = 'position:absolute; top:-15px; right:20px; background:#ffb300; color:#333; padding:5px 15px; font-weight:bold; font-size:0.9rem; border-radius:20px; box-shadow:0 2px 5px rgba(0,0,0,0.2); z-index:99;';
+                    
+                    container.appendChild(etiqueta);
+                }
+            }, 800);
+        }
+    });
+</script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="marca" href="index.html">
+        <span class="marca__marca" aria-hidden="true"><img src="img/Brasão_Barretos.png" alt="Logo"></span>
+        <span>Portal de Transparência de Barretos</span>
+      </a>
+    </div>
+  </header>
+
+  <section class="hero" style="padding: 3rem 1rem 1.5rem 1rem;">
+    <h1 style="color: #0b4f6c; margin-bottom: 0.5rem;">Painel de Obras Públicas</h1>
+    <p class="lede">Acompanhe as construções, reformas e melhorias de infraestrutura contratadas pela Prefeitura Municipal.</p>
+  </section>
+
+  <div style="max-width: 1200px; margin: 0 auto; padding: 0 1rem 3rem 1rem;">
+      <p id="mensagem-carregando" style="text-align: center; font-weight: bold; color: #0b4f6c;">⏳ A carregar base de dados de obras... Aguarde.</p>
+      
+      <!-- RESUMO (Fica invisível até os dados carregarem) -->
+      <div id="area-resumo" style="display: none; justify-content: center; gap: 2rem; margin-bottom: 3rem; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 280px; background: white; padding: 2rem; border-radius: 12px; border-top: 5px solid #2a9d8f; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center;">
+              <h3 style="color: #666; margin-top: 0; font-size: 1rem; text-transform: uppercase;">Total de Obras Registadas</h3>
+              <div id="total-obras" style="font-size: 3rem; font-weight: bold; color: #2a9d8f;">0</div>
+          </div>
+          <div style="flex: 1; min-width: 280px; background: white; padding: 2rem; border-radius: 12px; border-top: 5px solid #8b0000; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center;">
+              <h3 style="color: #666; margin-top: 0; font-size: 1rem; text-transform: uppercase;">Volume Financeiro</h3>
+              <div id="valor-total" style="font-size: 2.2rem; font-weight: bold; color: #8b0000; margin-top: 10px;">R$ 0,00</div>
+          </div>
+      </div>
+
+      <!-- TABELA -->
+      <div id="area-tabela" style="display: none; background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+          <table id="tabela-obras" class="display" style="width:100%">
+              <thead>
+                  <tr>
+                      <th>Ano</th>
+                      <th>Situação</th>
+                      <th>Empresa Executora / CNPJ</th>
+                      <th>Descrição da Obra</th>
+                      <th style="text-align: right;">Valor Contratado</th>
+                  </tr>
+              </thead>
+              <tbody id="corpo-tabela-obras"></tbody>
+          </table>
+      </div>
+  </div>
+
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const resposta = await fetch('http://127.0.0.1:5050/api/obras');
+            const json = await resposta.json();
+
+            if (json.erro) {
+                document.getElementById('mensagem-carregando').innerHTML = `⚠️ ${json.erro}`;
+                document.getElementById('mensagem-carregando').style.color = 'red';
+                return;
+            }
+
+            let valorTotal = 0;
+            let linhasHTML = '';
+
+            json.dados.forEach(obra => {
+                valorTotal += obra.valor;
+                const valorFormatado = obra.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                
+                // Pinta a situação da obra de verde se estiver em execução
+                let badgeSituacao = obra.situacao;
+                if(obra.situacao.toUpperCase().includes('EXECUÇÃO')) {
+                    badgeSituacao = `<span style="background: #e6f4ea; color: #137333; padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: bold;">🏗️ ${obra.situacao}</span>`;
+                }
+
+                linhasHTML += `
+                    <tr>
+                        <td style="font-weight:bold;">${obra.ano}</td>
+                        <td>${badgeSituacao}</td>
+                        <td><b>${obra.empresa}</b><br><span style="color:#666; font-size:0.85rem;">CNPJ: ${obra.cnpj}</span></td>
+                        <td style="font-size: 0.9rem;">${obra.descricao}</td>
+                        <td style="text-align: right; font-weight: bold; color: #8b0000;">${valorFormatado}</td>
+                    </tr>
+                `;
+            });
+
+            // Esconde a mensagem de carregamento e mostra as divs
+            document.getElementById('mensagem-carregando').style.display = 'none';
+            document.getElementById('area-resumo').style.display = 'flex';
+            document.getElementById('area-tabela').style.display = 'block';
+
+            // Atualiza os resumos
+            document.getElementById('total-obras').innerText = json.dados.length;
+            document.getElementById('valor-total').innerText = valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+            document.getElementById('corpo-tabela-obras').innerHTML = linhasHTML;
+
+            $('#tabela-obras').DataTable({
+                language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/pt-BR.json' },
+                pageLength: 25,
+                order: [[0, 'desc']] // Ordena pelo ano mais recente
+            });
+
+        } catch (erro) {
+            console.error("Falha ao carregar obras:", erro);
+            // Atualiza a interface para o utilizador
+            const mensagemErroHTML = document.getElementById('mensagem-erro-obras');
+            if (mensagemErroHTML) {
+                mensagemErroHTML.innerHTML = '<span style="color: red; font-weight: bold;">Erro ao carregar os dados de obras. O servidor está ligado?</span>';
+            }
+            
+            // Envia a mensagem correta em texto limpo para o Detetive
+            if (typeof registarErroNoSistema === 'function') {
+                registarErroNoSistema('CRÍTICO', 'failed to fetch: Erro ao carregar os dados de obras. O servidor está ligado?');
+            }
+        }
+    });
+</script>
+</body>
+</html>

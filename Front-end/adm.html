@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel do Administrador - Erros do Sistema</title>
+  
+  <!-- SCRIPT DE SEGURANÇA: Expulsa quem tentar entrar pelo link sem login -->
+  <script>
+      if (localStorage.getItem('adminLogado') !== 'true') {
+          window.location.replace('index.html');
+      }
+  </script>
+
+  <style>
+    body {
+        margin: 0;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f4f7f6;
+        color: #333;
+    }
+    
+    .admin-header {
+        background-color: #052636;
+        color: white;
+        padding: 15px 30px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 4px solid #8b0000;
+    }
+
+    .admin-header h1 {
+        margin: 0;
+        font-size: 1.4rem;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .btn-sair {
+        background-color: transparent;
+        color: white;
+        border: 1px solid white;
+        padding: 8px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: 0.3s;
+        font-weight: bold;
+    }
+
+    .btn-sair:hover {
+        background-color: #8b0000;
+        border-color: #8b0000;
+    }
+
+    .container {
+        max-width: 1200px;
+        margin: 40px auto;
+        padding: 0 20px;
+    }
+
+    .card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 15px;
+    }
+
+    th, td {
+        padding: 12px 15px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+
+    th {
+        background-color: #f8f9fa;
+        color: #0b4f6c;
+        font-weight: bold;
+    }
+
+    tr:hover {
+        background-color: #f1f5f8;
+    }
+
+    .badge-erro {
+        background-color: #fce4e4;
+        color: #8b0000;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        font-weight: bold;
+    }
+
+    .badge-aviso {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        font-weight: bold;
+    }
+
+    .btn-resolver {
+        background-color: #2e7d32;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+
+    .btn-visualizar {
+        background-color: #0b4f6c;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        text-decoration: none;
+        display: inline-block;
+        margin-right: 5px;
+    }
+    .btn-visualizar:hover { background-color: #083c52; }
+  </style>
+</head>
+<body>
+
+    <header class="admin-header">
+        <h1>
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            Painel de Controlo de Sistema
+        </h1>
+        <button class="btn-sair" onclick="fazerLogout()">Encerrar Sessão</button>
+    </header>
+
+    <div class="container">
+        <!-- CABEÇALHO DO PAINEL COM BOTÃO DE HISTÓRICO -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 25px; flex-wrap: wrap; gap: 15px;">
+            <div>
+                <h2 id="titulo-painel" style="color: #0b4f6c; margin-bottom: 5px; margin-top: 0;">Monitorização de Falhas (Hoje)</h2>
+                <p id="subtitulo-painel" style="color: #666; margin-top: 0; margin-bottom: 0;">Acompanhe os erros registados no sistema durante o dia de hoje.</p>
+            </div>
+            <button id="btn-toggle-historico" onclick="alternarHistorico()" style="background-color: #4b5563; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-weight: bold; transition: 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.15);">
+                🕰️ Visualizar Histórico Completo
+            </button>
+        </div>
+        
+        <div class="card">
+            <table id="tabela-logs-reais">
+                <thead>
+                    <tr>
+                        <th>Data / Hora</th>
+                        <th>Nível</th>
+                        <th>Módulo Afetado</th>
+                        <th>Mensagem de Erro</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="corpo-tabela-erros">
+                    <!-- Os erros reais vão aparecer aqui automaticamente -->
+                </tbody>
+            </table>
+            <div id="mensagem-vazio" style="display: none; text-align: center; padding: 40px; color: #2e7d32; font-weight: bold; font-size: 1.2rem;">
+                🎉 Nenhum erro pendente. O sistema está a funcionar perfeitamente!
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Segurança: Expulsa se não estiver logado
+        if (localStorage.getItem('adminLogado') !== 'true') {
+            window.location.replace('index.html');
+        }
+
+        function fazerLogout() {
+            localStorage.removeItem('adminLogado');
+            window.location.href = 'index.html';
+        }
+
+        // Segurança: Expulsa se não estiver logado
+        if (localStorage.getItem('adminLogado') !== 'true') {
+            window.location.replace('index.html');
+        }
+
+        function fazerLogout() {
+            localStorage.removeItem('adminLogado');
+            window.location.href = 'index.html';
+        }
+
+        // ==========================================
+        // LÓGICA DE ALTERNÂNCIA (HOJE VS HISTÓRICO)
+        // ==========================================
+        let modoHistoricoAtivo = false;
+
+        window.alternarHistorico = function() {
+            modoHistoricoAtivo = !modoHistoricoAtivo;
+            const btn = document.getElementById('btn-toggle-historico');
+            const titulo = document.getElementById('titulo-painel');
+            const subtitulo = document.getElementById('subtitulo-painel');
+            
+            if (modoHistoricoAtivo) {
+                btn.innerHTML = '📅 Voltar para Erros de Hoje';
+                btn.style.backgroundColor = '#0b4f6c'; // Fica azul
+                titulo.innerHTML = 'Histórico Completo de Falhas';
+                subtitulo.innerHTML = 'Visualização de todos os incidentes guardados na memória do sistema.';
+            } else {
+                btn.innerHTML = '🕰️ Visualizar Histórico Completo';
+                btn.style.backgroundColor = '#4b5563'; // Fica cinzento
+                titulo.innerHTML = 'Monitorização de Falhas (Hoje)';
+                subtitulo.innerHTML = 'Acompanhe os erros registados no sistema durante o dia de hoje.';
+            }
+            carregarErrosReais(); // Recarrega a tabela com a nova visão
+        };
+
+        // ==========================================
+        // CARREGAMENTO DA TABELA
+        // ==========================================
+        function carregarErrosReais() {
+            const corpoTabela = document.getElementById('corpo-tabela-erros');
+            const tabelaLogs = document.getElementById('tabela-logs-reais');
+            const msgVazio = document.getElementById('mensagem-vazio');
+            
+            let logsTotais = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+            let logsParaExibir = [];
+
+            // Aplica o filtro de data se não estiver no modo histórico
+            if (!modoHistoricoAtivo) {
+                const dataDeHoje = new Date().toLocaleDateString('pt-BR'); // Ex: "29/10/2026"
+                logsParaExibir = logsTotais.filter(erro => erro.data.startsWith(dataDeHoje));
+            } else {
+                logsParaExibir = logsTotais;
+            }
+            
+            corpoTabela.innerHTML = ''; 
+
+            // Se não houver erros na vista atual, mostra a mensagem de sucesso
+            if (logsParaExibir.length === 0) {
+                tabelaLogs.style.display = 'none';
+                msgVazio.innerHTML = modoHistoricoAtivo 
+                    ? '🎉 Histórico limpo. O sistema não tem registos passados!' 
+                    : '🎉 Nenhum erro pendente hoje. O sistema está a funcionar perfeitamente!';
+                msgVazio.style.display = 'block';
+                return;
+            }
+
+            tabelaLogs.style.display = 'table';
+            msgVazio.style.display = 'none';
+
+            // Desenha as linhas da tabela
+            logsParaExibir.forEach(erro => {
+                const isResolvido = erro.resolvido ? true : false;
+                const corBadge = erro.nivel === 'CRÍTICO' || erro.nivel === 'CRÍTICO (Oculto)' ? 'badge-erro' : 'badge-aviso';
+                
+                const estiloLinha = isResolvido ? 'opacity: 0.55; background-color: #f4f7f6;' : '';
+                const corTextoErro = isResolvido ? '#666' : '#c62828';
+                
+                const iconeResolucao = erro.resolvido && erro.resolvido.includes('Auto') ? '🤖' : '✔';
+                const carimboResolucao = isResolvido ? `<br><span style="color: #2e7d32; font-size: 0.85rem; font-weight: bold;">${iconeResolucao} Resolvido em: ${erro.resolvido}</span>` : '';
+
+                const botoesAcao = isResolvido 
+                    ? `<button class="btn-resolver" style="background-color: #b97070;" onclick="excluirErroDefinitivamente(${erro.id})">🗑️ Excluir</button>`
+                    : `<a href="${erro.url_origem}" target="_blank" class="btn-visualizar" style="background-color: #0b4f6c; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; display: inline-block; margin-right: 5px; font-size: 0.85rem;">👁️ Visualizar</a>
+                       <button class="btn-resolver" style="background-color: #2e7d32; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;" onclick="marcarComoResolvido(${erro.id})">✔ Resolvido</button>`;
+
+                corpoTabela.innerHTML += `
+                    <tr style="${estiloLinha}; transition: all 0.3s ease;">
+                        <td style="color: #666; font-size: 0.9rem;">${erro.data}</td>
+                        <td><span class="${corBadge}">${erro.nivel}</span></td>
+                        <td style="font-weight: bold;">${erro.modulo}</td>
+                        <td style="color: ${corTextoErro}; line-height: 1.4;">${erro.mensagem} ${carimboResolucao}</td>
+                        <td style="white-space: nowrap;">
+                            ${botoesAcao}
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        window.marcarComoResolvido = function(idErro) {
+            let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+            let index = logs.findIndex(e => e.id === idErro);
+            if (index !== -1) {
+                logs[index].resolvido = new Date().toLocaleString('pt-BR');
+                localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+                carregarErrosReais(); 
+            }
+        };
+
+        window.excluirErroDefinitivamente = function(idErro) {
+            let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+            logs = logs.filter(erro => erro.id !== idErro);
+            localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+            carregarErrosReais();
+        };
+
+        // =========================================================
+        // ROBÔ DE AUTO-VERIFICAÇÃO (HEALTH CHECK)
+        // =========================================================
+        async function verificarSaudeDoSistema() {
+            try {
+                // Faz um pedido super rápido e leve ao servidor Python apenas para ver se ele está vivo
+                const resposta = await fetch('http://127.0.0.1:5050/api/despesas?ano=2026&mes=01', { 
+                    method: 'GET',
+                    cache: 'no-cache'
+                });
+
+                if (resposta.ok) {
+                    // O servidor está ONLINE! Vamos varrer a memória à procura de erros de conexão pendentes
+                    let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+                    let alterouAlgum = false;
+
+                    logs.forEach(erro => {
+                        // Se for um erro não resolvido e for do tipo "Falha de comunicação"
+                        if (!erro.resolvido && erro.mensagem.includes('Falha de comunicação')) {
+                            erro.resolvido = new Date().toLocaleString('pt-BR') + ' (Auto-Recuperação)';
+                            alterouAlgum = true;
+                        }
+                    });
+
+                    // Se o robô resolveu alguma coisa, guarda na memória e atualiza a tabela sozinho
+                    if (alterouAlgum) {
+                        localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+                        carregarErrosReais(); 
+                    }
+                }
+            } catch (error) {
+                // O servidor continua offline. O robô mantém os erros em aberto.
+                console.log("Robô de Monitorização: Servidor continua offline.");
+            }
+        }
+
+        // Carrega a tabela imediatamente ao abrir
+        document.addEventListener('DOMContentLoaded', () => {
+            carregarErrosReais();
+            
+            // O Robô testa a ligação assim que o painel abre, e depois a cada 10 segundos
+            verificarSaudeDoSistema();
+            setInterval(verificarSaudeDoSistema, 10000); 
+        });
+    </script>
+</body>
+</html>

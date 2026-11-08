@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Raio-X | Transparência Barretos</title>
+  <link rel="stylesheet" href="css/estilo.css">
+  
+  <!-- CSS do DataTables -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+  <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css">
+  <script>
+    // 1. DICIONÁRIO DE TRADUÇÃO DE ERROS
+    function traduzirErro(mensagemOriginal) {
+        if (!mensagemOriginal) return { texto: "Erro desconhecido sem mensagem.", alvo: "body" };
+        let msg = mensagemOriginal.toString().toLowerCase();
+        
+        if (msg.includes('graficoinvestimentos')) return { texto: "O sistema tentou desenhar o 'Gráfico de Investimentos', mas ele não existe no ecrã.", alvo: "#graficoExecutado" };
+        if (msg.includes('getcontext')) return { texto: "Um dos painéis de gráficos falhou ao tentar ser desenhado no ecrã.", alvo: "canvas" };
+        if (msg.includes('failed to fetch') || msg.includes('network error') || msg.includes('falha ao fazer o fetch')) {
+            return { texto: "Falha de comunicação: O Servidor Python (Banco de Dados) não responde. Verifique se o servidor está ligado.", alvo: "form, .filtro-bar, .container" };
+        }
+        if (msg.includes('is not defined')) {
+            let variavel = mensagemOriginal.split(' ')[0] || 'Desconhecida';
+            return { texto: `Erro de código: A função ou elemento '${variavel}' não foi encontrado na página.`, alvo: "body" };
+        }
+        if (msg.includes('null (reading') || msg.includes('undefined (reading')) {
+            return { texto: "O sistema tentou ler ou alterar um painel, botão ou tabela que não existe ou foi apagado.", alvo: "body" };
+        }
+        if (msg.includes('unexpected token') || msg.includes('json')) {
+            return { texto: "O servidor Python devolveu um erro interno (HTML/Texto) em vez dos dados corretos (JSON).", alvo: "body" };
+        }
+        if (msg.includes('datatables')) {
+            return { texto: "Erro na Tabela de Dados: Falha ao carregar, paginar ou processar as informações do banco.", alvo: "table" };
+        }
+        
+        return { texto: `Anomalia detetada: ${mensagemOriginal}`, alvo: "body" };
+    }
+
+    function registarErroNoSistema(nivel, mensagem) {
+        let logs = JSON.parse(localStorage.getItem('logsTransparenciaReal') || '[]');
+        
+        // Filtro muito curto (apenas 1 segundo) apenas para evitar que o navegador trave em loops infinitos, mas regista tudo!
+        if (logs.length > 0 && logs[0].mensagem.includes(traduzirErro(mensagem).texto.substring(0, 20)) && (Date.now() - logs[0].id) < 1000) {
+            return; 
+        }
+
+        let erroFormatado = traduzirErro(mensagem);
+        let paginaAtual = window.location.pathname.split('/').pop() || 'index.html';
+        let separador = window.location.search.includes('?') ? '&' : '?';
+        let urlComMarcador = paginaAtual + window.location.search + separador + "destacar_erro=" + encodeURIComponent(erroFormatado.alvo);
+
+        logs.unshift({
+            id: Date.now(),
+            data: new Date().toLocaleString('pt-BR'),
+            nivel: nivel,
+            modulo: paginaAtual,
+            mensagem: erroFormatado.texto,
+            url_origem: urlComMarcador
+        });
+        
+        if (logs.length > 100) logs.pop(); // Aumentado para guardar até os últimos 100 erros (Visibilidade Total)
+        localStorage.setItem('logsTransparenciaReal', JSON.stringify(logs));
+    }
+
+    // 1. CAPTURA ERROS GLOBAIS DE JAVASCRIPT
+    window.addEventListener('error', function(event) {
+        registarErroNoSistema('CRÍTICO', event.message || 'Erro de Script Desconhecido');
+    });
+
+    // 2. CAPTURA FALHAS DE FETCH E PROMISES REJEITADAS (Sem restrição de tempo)
+    window.addEventListener('unhandledrejection', function(event) {
+        let msg = event.reason ? (event.reason.message || event.reason) : 'Falha na conexão de rede com a API.';
+        registarErroNoSistema('AVISO', msg);
+    });
+
+    // 3. CAPTURA ERROS ESCONDIDOS NO CONSOLE DO NAVEGADOR
+    const consoleErrorOriginal = console.error;
+    console.error = function(...args) {
+        let mensagem = args.map(a => (typeof a === 'object' && a !== null ? JSON.stringify(a) : a)).join(' ');
+        registarErroNoSistema('CRÍTICO (Oculto)', mensagem);
+        consoleErrorOriginal.apply(console, args); // Mantém o erro no console original
+    };
+
+    // 4. CAPTURA ERROS ESPECÍFICOS DO DATATABLES
+    // Oculta as mensagens nativas feias e envia para o painel de administração
+    if (typeof $ !== 'undefined' && $.fn && $.fn.dataTable) {
+        $.fn.dataTable.ext.errMode = 'none'; // Desliga os alerts irritantes
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof $ !== 'undefined') {
+            $(document).on('error.dt', function (e, settings, techNote, message) {
+                registarErroNoSistema('CRÍTICO', 'DataTables: ' + message);
+            });
+        }
+    });
+
+    // MARCADOR VISUAL DO MÓDULO AVARIADO
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const alvo = urlParams.get('destacar_erro');
+        
+        if (alvo && alvo !== 'body') {
+            setTimeout(() => {
+                let elementos = document.querySelectorAll(alvo);
+                let elemento = elementos.length > 1 ? elementos[elementos.length - 1] : elementos[0];
+                
+                if (elemento) {
+                    let container = (elemento.tagName !== 'CANVAS' && elemento.tagName !== 'TABLE' && elemento.tagName !== 'FORM') ? elemento : (elemento.closest('.card') || elemento.parentNode);
+                    
+                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    container.style.transition = 'all 0.5s ease';
+                    container.style.boxShadow = '0 0 0 4px #ffb300, 0 10px 30px rgba(139,0,0,0.15)';
+                    container.style.backgroundColor = '#fffbf0'; 
+                    container.style.position = 'relative';
+                    
+                    let etiqueta = document.createElement('div');
+                    etiqueta.innerHTML = '🔍 Módulo Avariado';
+                    etiqueta.style.cssText = 'position:absolute; top:-15px; right:20px; background:#ffb300; color:#333; padding:5px 15px; font-weight:bold; font-size:0.9rem; border-radius:20px; box-shadow:0 2px 5px rgba(0,0,0,0.2); z-index:99;';
+                    
+                    container.appendChild(etiqueta);
+                }
+            }, 800);
+        }
+    });
+</script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="marca" href="index.html">
+        <span class="marca__marca" aria-hidden="true"><img src="img/Brasão_Barretos.png" alt="Logo"></span>
+        <span>Portal de Transparência de Barretos</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- SEÇÃO DE BUSCA -->
+  <section class="hero" style="padding: 4rem 1rem 2rem 1rem;">
+    <h1 style="color: #000000; margin-bottom: 1rem;">Raio-X do Fornecedor</h1>
+    <p class="lede" style="margin-bottom: 2.5rem;">Audite o histórico completo de qualquer empresa, cidadão ou instituição com a Prefeitura de Barretos.</p>
+    
+    <div style="max-width: 700px; margin: 0 auto; display: flex; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden;">
+        <input type="text" id="input-busca" placeholder="Digite o CNPJ, CPF ou Nome da Empresa..." style="flex: 1; padding: 18px 20px; font-size: 1.1rem; border: none; outline: none;">
+        <button onclick="realizarBusca()" style="background-color: #000000; color: white; border: none; padding: 0 30px; font-size: 1.1rem; font-weight: bold; cursor: pointer; transition: 0.3s;">
+            Investigar
+        </button>
+    </div>
+    <p id="mensagem-status" style="margin-top: 15px; color: #666; font-weight: bold;"></p>
+  </section>
+
+  <!-- RESULTADOS (Invisível até pesquisar) -->
+  <div id="area-resultados" style="display: none; max-width: 1200px; margin: 2rem auto; padding: 0 1rem;">
+      
+      <!-- CARDS DE RESUMO -->
+      <div style="display: flex; justify-content: center; margin-bottom: 3rem;">
+          <div style="width: 100%; max-width: 600px; background: white; padding: 2rem; border-radius: 12px; border-top: 6px solid #8b0000; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center;">
+              <h3 style="color: #666; margin-top: 0; font-size: 1.1rem; text-transform: uppercase;">Volume Total Recebido da Prefeitura</h3>
+              <p style="font-size: 0.95rem; color: #888; margin-bottom: 15px;">Soma de todos os contratos, serviços e vendas encontrados para este CNPJ/CPF</p>
+              <div id="valor-ganho" style="font-size: 3rem; font-weight: bold; color: #8b0000;">R$ 0,00</div>
+          </div>
+      </div>
+
+      <!-- TABELA DE HISTÓRICO -->
+      <div style="background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+          <h2 style="color: #0b4f6c; margin-top: 0; margin-bottom: 1.5rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px;">Extrato Detalhado de Movimentações</h2>
+          <table id="tabela-raiox" class="display" style="width:100%">
+              <thead>
+                  <tr>
+                      <th>Data</th>
+                      <th>Tipo de Movimentação</th>
+                      <th>CNPJ / Nome Encontrado</th>
+                      <th>Categoria / Descrição</th>
+                      <th style="text-align: right;">Valor (R$)</th>
+                  </tr>
+              </thead>
+              <tbody id="corpo-tabela"></tbody>
+          </table>
+      </div>
+  </div>
+
+  <footer class="site-footer" style="margin-top: 4rem;">
+    <div class="site-footer__inner">
+      <p><b>Amanda Oliveira Rodrigues - 82316860; Gabriel Patricio Soares - 82317440; João Vitor Benjamin - 823133703;</b></p>
+      <p><b>Nathália de Almeida Donato - 823118299; Paulo Henrique Varga da Silva - 823142340;</b></p>
+    </div>
+  </footer>
+
+<!-- Bibliotecas JS -->
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
+
+<script>
+    // Permite pesquisar apertando a tecla "Enter"
+    document.getElementById("input-busca").addEventListener("keypress", function(event) {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            realizarBusca();
+        }
+    });
+
+    async function realizarBusca() {
+        const termo = document.getElementById('input-busca').value;
+        const status = document.getElementById('mensagem-status');
+        const areaResultados = document.getElementById('area-resultados');
+        
+        if (termo.length < 3) {
+            status.style.color = '#8b0000';
+            status.innerText = "Por favor, digite pelo menos 3 caracteres.";
+            return;
+        }
+
+        status.style.color = '#0b4f6c';
+        status.innerText = "A investigar bases de dados governamentais... Aguarde.";
+        areaResultados.style.display = 'none';
+
+        try {
+            const resposta = await fetch(`http://127.0.0.1:5050/api/raiox?termo=${encodeURIComponent(termo)}`);
+            
+            // 1. DETETOR DE ROTA INEXISTENTE (Se esqueceu de reiniciar o Python)
+            if (resposta.status === 404) {
+                throw new Error("Erro 404: Rota não encontrada. Reiniciou o terminal com o app_2.py?");
+            }
+            
+            // 2. DETETOR DE ERRO INTERNO DO PYTHON
+            if (!resposta.ok) {
+                throw new Error(`Falha no Servidor Python (Código ${resposta.status}). Verifique a tela preta do terminal.`);
+            }
+
+            // Tenta converter para JSON
+            const textoResposta = await resposta.text();
+            let json;
+            try {
+                json = JSON.parse(textoResposta);
+            } catch (e) {
+                throw new Error("O Python crashou e não devolveu dados válidos. Verifique os erros na tela preta do terminal.");
+            }
+
+            if (json.erro) {
+                status.style.color = '#8b0000';
+                status.innerText = json.erro;
+                return;
+            }
+
+            if (json.dados.length === 0) {
+                status.style.color = '#666';
+                status.innerText = "Nenhuma transação encontrada para este nome ou documento na base de dados.";
+                return;
+            }
+
+            status.innerText = `${json.dados.length} registos encontrados!`;
+            
+            let ganhoEmpresa = 0; 
+            let pagoPelaEmpresa = 0; 
+            let linhasHTML = '';
+
+            if ($.fn.DataTable.isDataTable('#tabela-raiox')) {
+                $('#tabela-raiox').DataTable().clear().destroy();
+            }
+
+            json.dados.forEach(item => {
+                const valorFormatado = item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                
+                let dataBR = item.data;
+                let dataInvisivel = item.data; // Guarda a data no formato AAAA-MM-DD para o computador ler
+                
+                if (item.data && item.data.includes('-')) {
+                    dataBR = item.data.split('-').reverse().join('/');
+                }
+
+                ganhoEmpresa += item.valor;
+                let corTipo = '<span style="background: #8b000015; color: #8b0000; padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: bold;">💸 Saída de Caixa</span>';
+
+                // A magia acontece aqui: <td data-sort="${dataInvisivel}">
+                linhasHTML += `
+                    <tr>
+                        <td data-sort="${dataInvisivel}">${dataBR}</td>
+                        <td>${corTipo}</td>
+                        <td style="font-weight: 500;">${item.fornecedor}</td>
+                        <td style="font-size: 0.9rem;"><b>${item.categoria}</b><br><span style="color: #666;">${item.descricao}</span></td>
+                        <td style="text-align: right; font-weight: bold;">${valorFormatado}</td>
+                    </tr>
+                `;
+            });
+
+            // Atualiza apenas o cartão vermelho (mantendo a alteração que fizemos antes)
+            document.getElementById('valor-ganho').innerText = ganhoEmpresa.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            
+            document.getElementById('corpo-tabela').innerHTML = linhasHTML;
+            areaResultados.style.display = 'block';
+
+            $('#tabela-raiox').DataTable({
+                dom: 'Bfrtip',
+                buttons: [
+                    { extend: 'excelHtml5', text: 'Exportar Investigação (Excel)', className: 'botao' }
+                ],
+                language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/pt-BR.json' },
+                pageLength: 25,
+                order: [[0, 'desc']] 
+            });
+
+        } catch (erro) {
+            console.error(erro);
+            status.style.color = '#8b0000';
+            // Agora a mensagem na tela será específica sobre o que realmente deu errado!
+            status.innerText = erro.message || "Erro ao contactar o servidor. Certifique-se de que o app_2.py está a correr.";
+        }
+    }
+</script>
+</body>
+</html>
